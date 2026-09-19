@@ -1,3 +1,7 @@
+## [7.96.2] — floor-plan importer reads native SweetHome3D .sh3d files
+
+`scripts/sweethome3d_to_floorplan.py` now accepts a native **`.sh3d`** save file and raw SweetHome3D **XML** in addition to the JSON export, auto-detected from the input. This addresses the crux of #34: some exporters (the HTML export, older ExportToHASS builds) emit an empty `room` array even when rooms are drawn and named, whereas the native `.sh3d` always carries the room polygons — so pointing the tool at the file you already have is the reliable route. A `.sh3d` saved in SweetHome3D's legacy binary format (no XML home entry) now fails with a clear instruction to enable "Save homes in XML format" rather than a traceback. Docs and the "no rooms found" guidance updated accordingly. No change to the integration's runtime behaviour.
+
 ## [7.96.1] — the 7.96.0 toggles now appear in the panel's Settings tab
 
 The FRIDAY, proximity-TTS and host-telemetry controls shipped in 7.96.0 were only wired into Home Assistant's *Configure* dialog, not the JARVIS panel's **Settings** tab where everything else is managed — so FRIDAY, in particular, looked missing. A new **Sub-Agents & Automation** card under Settings → General now exposes all three:

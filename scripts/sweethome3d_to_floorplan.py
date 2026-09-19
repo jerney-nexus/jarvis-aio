@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Convert a SweetHome3D JSON export into JARVIS `floor_plan_rooms` JSON.
+"""Convert a SweetHome3D plan into JARVIS `floor_plan_rooms` JSON.
 
 The Residence tab stores its plan under the `floor_plan_rooms` config key as
 
@@ -8,13 +8,27 @@ The Residence tab stores its plan under the `floor_plan_rooms` config key as
 (see `custom_components/jarvis/residence_graph.py`, which reads it to derive
 room adjacency). SweetHome3D, by contrast, describes a home as a set of wall
 segments, doors/windows, furniture and — when you draw them — `room` polygons.
-This helper reads a SweetHome3D JSON export and emits the axis-aligned bounding
-box of every room polygon in the shape JARVIS expects, so you can paste the
-result straight into the config instead of hand-escaping JSON.
+This helper reads a SweetHome3D plan and emits the axis-aligned bounding box of
+every room polygon in the shape JARVIS expects, so you can paste the result
+straight into the config instead of hand-escaping JSON.
+
+Accepted inputs (auto-detected):
+  * a native **.sh3d** file (SweetHome3D's own save file — a ZIP whose ``Home``
+    entry is XML when "Save homes in XML format" is enabled),
+  * a SweetHome3D **XML** document (``Home.xml`` / an XML export),
+  * a SweetHome3D **JSON** export (``{"home": {...}}``).
+
+The .sh3d / XML path matters because some third-party exporters (the HTML
+export, older ExportToHASS builds) drop the `room` array even when rooms are
+drawn. The native file always carries the rooms, so pointing this tool at the
+`.sh3d` you already have is the most reliable route.
 
 Usage
 -----
-    # From a JSON file, pretty plan to stdout:
+    # Straight from the SweetHome3D save file:
+    python3 scripts/sweethome3d_to_floorplan.py "Projet maison 3d.sh3d"
+
+    # From a JSON export, pretty plan to stdout:
     python3 scripts/sweethome3d_to_floorplan.py home.json
 
     # From stdin, and also a paste-ready escaped string for the config field:
@@ -29,27 +43,103 @@ Notes
   convention JARVIS's plan uses, so no axis flip is needed. `--scale` just
   rescales the numbers; adjacency is scale-independent (the touch test uses a
   gap proportional to the coordinates).
-* Rooms are grouped by SweetHome3D level (floor) when the export defines
-  levels; otherwise everything lands on a single floor (`--floor`, default
-  "main").
-* If the export contains no `room` polygons — a SweetHome3D file can be all
-  walls and furniture with no rooms drawn — there is nothing to convert. Draw
-  rooms in SweetHome3D first (Plan menu -> Create rooms, or double-click inside
-  a closed set of walls to auto-detect one), re-export, and run this again.
+* Rooms are grouped by SweetHome3D level (floor) when the plan defines levels;
+  otherwise everything lands on a single floor (`--floor`, default "main").
+* If the plan contains no `room` polygons — a SweetHome3D file can be all walls
+  and furniture with no rooms drawn — there is nothing to convert. Draw rooms in
+  SweetHome3D first (Plan menu -> Create rooms, or double-click inside a closed
+  set of walls to auto-detect one), save, and run this again.
 
 Exit code 0 = at least one room converted, 1 = nothing to convert / bad input.
 """
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import sys
+import xml.etree.ElementTree as ET
+import zipfile
 from typing import Any, Optional
 
 
+def _read_bytes(source: str) -> bytes:
+    if source == "-":
+        return sys.stdin.buffer.read()
+    with open(source, "rb") as f:
+        return f.read()
+
+
+def _looks_like_xml(raw: bytes) -> bool:
+    head = raw.lstrip()[:256].lower()
+    return head.startswith(b"<?xml") or b"<home" in head
+
+
+def _xml_home_from_sh3d(data: bytes) -> Optional[str]:
+    """Return the XML text of the home from a .sh3d ZIP, or None if the archive
+    has no XML home entry (e.g. it was saved in the legacy binary format)."""
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(data))
+    except zipfile.BadZipFile:
+        return None
+    names = zf.namelist()
+    # SweetHome3D stores the home as an entry named "Home"; try it first, then
+    # any *.xml entry, then anything else that happens to look like XML.
+    ordered = ([n for n in names if n == "Home"]
+               + [n for n in names if n.lower().endswith(".xml")]
+               + names)
+    seen: set[str] = set()
+    for name in ordered:
+        if name in seen:
+            continue
+        seen.add(name)
+        try:
+            raw = zf.read(name)
+        except Exception:
+            continue
+        if _looks_like_xml(raw):
+            return raw.decode("utf-8", "replace")
+    return None
+
+
+def _parse_xml_home(text: str) -> dict:
+    """Normalise a SweetHome3D XML home into the same dict shape the JSON path
+    produces: ``{"level": [{id, name}], "room": [{name, level, points:[[x,y]]}]}``."""
+    root = ET.fromstring(text)
+    levels: list[dict] = []
+    for lvl in root.iter("level"):
+        lid = lvl.get("id") or lvl.get("name") or str(len(levels))
+        levels.append({"id": lid, "name": lvl.get("name") or lid})
+    rooms: list[dict] = []
+    for rm in root.iter("room"):
+        pts: list[list[float]] = []
+        for pt in rm.findall("point"):
+            try:
+                pts.append([float(pt.get("x")), float(pt.get("y"))])
+            except (TypeError, ValueError):
+                continue
+        rooms.append({"name": rm.get("name") or "",
+                      "level": rm.get("level"), "points": pts})
+    return {"level": levels, "room": rooms}
+
+
 def _load(source: str) -> Any:
-    text = sys.stdin.read() if source == "-" else open(source, encoding="utf-8").read()
-    return json.loads(text)
+    """Read the source and return either a parsed JSON document or a normalised
+    home dict (for .sh3d / XML input). Both are accepted by ``_home``."""
+    data = _read_bytes(source)
+    if data[:2] == b"PK":            # ZIP magic → a .sh3d save file
+        xml = _xml_home_from_sh3d(data)
+        if xml is None:
+            raise ValueError(
+                "this .sh3d file has no XML home entry — it was saved in "
+                "SweetHome3D's legacy binary format, which this tool can't read. "
+                "In SweetHome3D, turn on File → Preferences → 'Save homes "
+                "in XML format', re-save the file, and run this again (or pass the "
+                "JSON export instead).")
+        return _parse_xml_home(xml)
+    if _looks_like_xml(data):        # a raw Home.xml / XML export
+        return _parse_xml_home(data.decode("utf-8", "replace"))
+    return json.loads(data.decode("utf-8", "replace").lstrip("﻿"))
 
 
 def _home(doc: Any) -> dict:
@@ -137,7 +227,8 @@ def _shift_to_origin(plan: dict[str, dict]) -> None:
 def main(argv: Optional[list[str]] = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("source", help="SweetHome3D JSON export file, or - for stdin")
+    ap.add_argument("source",
+                    help="SweetHome3D .sh3d file, XML, or JSON export (- for stdin)")
     ap.add_argument("--scale", type=float, default=1.0,
                     help="multiply every coordinate (default 1.0; SweetHome3D units are cm)")
     ap.add_argument("--floor", default="main",
@@ -150,8 +241,8 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     try:
         home = _home(_load(args.source))
-    except (OSError, ValueError, json.JSONDecodeError) as e:
-        print(f"error: could not read SweetHome3D JSON: {e}", file=sys.stderr)
+    except (OSError, ValueError, json.JSONDecodeError, ET.ParseError) as e:
+        print(f"error: could not read SweetHome3D plan: {e}", file=sys.stderr)
         return 1
 
     plan = convert(home, scale=args.scale, default_floor=args.floor)
@@ -161,11 +252,15 @@ def main(argv: Optional[list[str]] = None) -> int:
     total = sum(len(f["rooms"]) for f in plan.values())
     if not total:
         print(
-            "error: no room polygons found in this SweetHome3D export.\n"
-            "A file that is only walls, doors and furniture has no rooms to import.\n"
-            "In SweetHome3D, draw rooms first (Plan menu -> Create rooms, or\n"
-            "double-click inside a closed set of walls to auto-detect one),\n"
-            "re-export to JSON, and run this again.",
+            "error: no room polygons found in this SweetHome3D plan.\n"
+            "A file that is only walls, doors and furniture has no rooms to import,\n"
+            "and some exporters (HTML export, older ExportToHASS builds) drop the\n"
+            "room array even when rooms exist. Two things to check:\n"
+            "  1. In SweetHome3D, make sure rooms are actually drawn (Plan menu ->\n"
+            "     Create rooms, or double-click inside a closed set of walls).\n"
+            "  2. Feed this tool the native .sh3d file (or its XML) rather than an\n"
+            "     HTML/JSON export — the native file always carries the rooms.\n"
+            "Then run this again.",
             file=sys.stderr,
         )
         return 1
