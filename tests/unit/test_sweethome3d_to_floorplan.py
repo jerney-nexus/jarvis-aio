@@ -81,3 +81,76 @@ def test_output_matches_floor_plan_rooms_schema(conv):
     assert plan["main"]["labels"] == []
     # round-trips through JSON string exactly as the config stores it
     assert json.loads(json.dumps(plan)) == plan
+
+
+# ── native .sh3d / XML input (issue #34: HTML/JSON export drops the room array) ──
+
+import io
+import zipfile
+
+import pytest as _pytest
+
+_SH3D_XML = """<?xml version='1.0'?>
+<home version='7400'>
+  <level id='lvl0' name='Ground'/>
+  <room level='lvl0' name='Salon'>
+    <point x='0' y='0'/><point x='400' y='0'/><point x='400' y='300'/><point x='0' y='300'/>
+  </room>
+  <room name='Chambre Hugo'>
+    <point x='0' y='300'/><point x='350' y='300'/><point x='350' y='600'/><point x='0' y='600'/>
+  </room>
+  <wall xStart='0' yStart='0' xEnd='400' yEnd='0'/>
+</home>"""
+
+
+def test_parse_xml_home_normalises_rooms_levels_points(conv):
+    home = conv._parse_xml_home(_SH3D_XML)
+    names = {r["name"] for r in home["room"]}
+    assert names == {"Salon", "Chambre Hugo"}
+    salon = next(r for r in home["room"] if r["name"] == "Salon")
+    assert salon["level"] == "lvl0"
+    assert salon["points"][0] == [0.0, 0.0] and salon["points"][2] == [400.0, 300.0]
+    # feeds convert() unchanged
+    plan = conv.convert(home, scale=1.0, default_floor="main")
+    assert plan["Ground"]["rooms"][0]["name"] == "Salon"
+    assert plan["main"]["rooms"][0]["name"] == "Chambre Hugo"
+
+
+def test_load_reads_raw_xml_file(conv, tmp_path):
+    p = tmp_path / "Home.xml"
+    p.write_text(_SH3D_XML, encoding="utf-8")
+    home = conv._home(conv._load(str(p)))
+    assert {r["name"] for r in home["room"]} == {"Salon", "Chambre Hugo"}
+
+
+def _sh3d_bytes(home_entry: bytes) -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("Home", home_entry)
+        z.writestr("0", b"fake-resource")
+    return buf.getvalue()
+
+
+def test_load_reads_native_sh3d_zip(conv, tmp_path):
+    p = tmp_path / "plan.sh3d"
+    p.write_bytes(_sh3d_bytes(_SH3D_XML.encode("utf-8")))
+    plan = conv.convert(conv._home(conv._load(str(p))), scale=1.0, default_floor="main")
+    assert plan["Ground"]["rooms"][0]["name"] == "Salon"
+
+
+def test_legacy_binary_sh3d_raises_actionable_error(conv, tmp_path):
+    # A .sh3d whose Home entry is Java-serialized binary (no XML) must fail with
+    # guidance, not a traceback.
+    p = tmp_path / "legacy.sh3d"
+    p.write_bytes(_sh3d_bytes(b"\xac\xed\x00\x05sr\x00\x1ecom.eteks.sweethome3d"))
+    with _pytest.raises(ValueError) as ei:
+        conv._load(str(p))
+    assert "XML format" in str(ei.value)
+
+
+def test_json_path_still_works(conv, tmp_path):
+    p = tmp_path / "home.json"
+    p.write_text(json.dumps({"home": {"room": [
+        {"name": "K", "points": [[0, 0], [1, 0], [1, 1], [0, 1]]}]}}), encoding="utf-8")
+    plan = conv.convert(conv._home(conv._load(str(p))), scale=1.0, default_floor="main")
+    assert plan["main"]["rooms"][0]["name"] == "K"
