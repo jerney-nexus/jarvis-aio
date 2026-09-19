@@ -154,3 +154,57 @@ def test_json_path_still_works(conv, tmp_path):
         {"name": "K", "points": [[0, 0], [1, 0], [1, 1], [0, 1]]}]}}), encoding="utf-8")
     plan = conv.convert(conv._home(conv._load(str(p))), scale=1.0, default_floor="main")
     assert plan["main"]["rooms"][0]["name"] == "K"
+
+
+# ── floor-key default + rotation (issue #34 follow-up) ───────────────────────
+
+def test_cli_default_floor_key_is_1f(conv, tmp_path, capsys):
+    # JARVIS's Residence tab keys floors 1f/2f/bsmt; a plan keyed "main" shows on
+    # no tab, so the CLI default floor must be 1f (issue #34).
+    p = tmp_path / "home.json"
+    p.write_text(json.dumps({"home": {"room": [
+        {"name": "R", "points": [[0, 0], [1, 0], [1, 1], [0, 1]]}]}}), encoding="utf-8")
+    rc = conv.main([str(p)])
+    assert rc == 0
+    out = json.loads(capsys.readouterr().out)
+    assert list(out) == ["1f"]
+
+
+def test_convert_uses_given_floor_key(conv):
+    home = {"room": [{"name": "R", "points": [[0, 0], [1, 0], [1, 1], [0, 1]]}]}
+    plan = conv.convert(home, scale=1.0, default_floor="1f")
+    assert list(plan) == ["1f"]
+
+
+def test_rotate_180_flips_both_axes(conv):
+    # Two rooms side by side: after 180° the left one ends up on the right.
+    home = {"room": [
+        {"name": "Left", "points": [[0, 0], [100, 0], [100, 100], [0, 100]]},
+        {"name": "Right", "points": [[100, 0], [300, 0], [300, 100], [100, 100]]},
+    ]}
+    plan = conv.convert(home, scale=1.0, default_floor="1f")
+    conv._rotate_plan(plan, 180)
+    rooms = {r["name"]: r for r in plan["1f"]["rooms"]}
+    # widths/heights unchanged
+    assert rooms["Left"]["w"] == 100 and rooms["Right"]["w"] == 200
+    # order flipped along x: Right (originally at 100) now starts at 0
+    assert rooms["Right"]["x"] == 0
+    assert rooms["Left"]["x"] == 200
+    # re-origined to (0,0)
+    assert min(r["x"] for r in plan["1f"]["rooms"]) == 0
+
+
+def test_rotate_90_swaps_width_and_height(conv):
+    home = {"room": [{"name": "Wide", "points": [[0, 0], [400, 0], [400, 100], [0, 100]]}]}
+    plan = conv.convert(home, scale=1.0, default_floor="1f")
+    conv._rotate_plan(plan, 90)
+    r = plan["1f"]["rooms"][0]
+    assert (r["w"], r["h"]) == (100, 400)     # w/h swapped
+
+
+def test_rotate_zero_is_noop(conv):
+    home = {"room": [{"name": "R", "points": [[5, 5], [105, 5], [105, 55], [5, 55]]}]}
+    plan = conv.convert(home, scale=1.0, default_floor="1f")
+    before = json.dumps(plan, sort_keys=True)
+    conv._rotate_plan(plan, 0)
+    assert json.dumps(plan, sort_keys=True) == before

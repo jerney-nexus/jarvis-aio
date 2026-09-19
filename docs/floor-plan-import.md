@@ -63,10 +63,21 @@ python3 scripts/sweethome3d_to_floorplan.py "plan.sh3d" --as-config-string
 
 # SweetHome3D units are centimetres; scale down and re-origin to (0,0):
 python3 scripts/sweethome3d_to_floorplan.py "plan.sh3d" --scale 0.5 --origin-zero
+
+# If the plan imports mirrored/rotated vs the house model, rotate it clockwise
+# (180 swaps front/back and left/right at once):
+python3 scripts/sweethome3d_to_floorplan.py "plan.sh3d" --rotate 180 --origin-zero
 ```
 
 Then paste the JSON onto the Residence tab (or into the `floor_plan_rooms`
 config field).
+
+### Floors: use `1f` / `2f` / `bsmt`
+
+The Residence tab's floor tabs are keyed **`1f`** (1st floor), **`2f`**, and
+**`bsmt`** — a plan keyed anything else (the old default was `main`) loads but
+shows on no tab, so it looks like nothing happened. Rooms without a SweetHome3D
+level now default to **`1f`**; override with `--floor` if you need `2f`/`bsmt`.
 
 ### Prefer the `.sh3d` file over an HTML/plugin export
 

@@ -1,3 +1,7 @@
+## [7.96.3] — floor-plan importer: right floor key by default, plus rotation
+
+Two follow-ups from #34, learned from a real import. The converter's default floor is now **`1f`** instead of `main` — JARVIS's Residence tab keys floors `1f`/`2f`/`bsmt`, so a plan keyed `main` loaded but appeared on no tab (it looked like nothing happened). And a new **`--rotate 90|180|270`** flag turns the whole plan clockwise for plans that import mirrored or rotated relative to the house model — `--rotate 180` swaps front/back and left/right in one go. Docs and tests updated. No change to the integration's runtime behaviour.
+
 ## [7.96.2] — floor-plan importer reads native SweetHome3D .sh3d files
 
 `scripts/sweethome3d_to_floorplan.py` now accepts a native **`.sh3d`** save file and raw SweetHome3D **XML** in addition to the JSON export, auto-detected from the input. This addresses the crux of #34: some exporters (the HTML export, older ExportToHASS builds) emit an empty `room` array even when rooms are drawn and named, whereas the native `.sh3d` always carries the room polygons — so pointing the tool at the file you already have is the reliable route. A `.sh3d` saved in SweetHome3D's legacy binary format (no XML home entry) now fails with a clear instruction to enable "Save homes in XML format" rather than a traceback. Docs and the "no rooms found" guidance updated accordingly. No change to the integration's runtime behaviour.
