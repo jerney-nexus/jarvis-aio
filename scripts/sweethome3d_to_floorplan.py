@@ -44,7 +44,11 @@ Notes
   rescales the numbers; adjacency is scale-independent (the touch test uses a
   gap proportional to the coordinates).
 * Rooms are grouped by SweetHome3D level (floor) when the plan defines levels;
-  otherwise everything lands on a single floor (`--floor`, default "main").
+  otherwise everything lands on a single floor (`--floor`, default "1f" — the
+  Residence tab's floor keys are 1f / 2f / bsmt, so a plan keyed anything else
+  shows on no floor tab).
+* `--rotate 90|180|270` turns the whole plan clockwise if it imports mirrored or
+  rotated relative to the house model (180 swaps front/back and left/right).
 * If the plan contains no `room` polygons — a SweetHome3D file can be all walls
   and furniture with no rooms drawn — there is nothing to convert. Draw rooms in
   SweetHome3D first (Plan menu -> Create rooms, or double-click inside a closed
@@ -224,6 +228,27 @@ def _shift_to_origin(plan: dict[str, dict]) -> None:
         r["y"] = round(r["y"] - dy, 2)
 
 
+def _rotate_plan(plan: dict[str, dict], degrees: int) -> None:
+    """Rotate the whole plan clockwise by 0/90/180/270°, keeping every room
+    axis-aligned, then re-origin to (0, 0). Use it when the imported plan comes
+    out mirrored/rotated relative to the house model on the Residence tab —
+    180° swaps front↔back and left↔right at once."""
+    deg = degrees % 360
+    if deg == 0:
+        return
+    for floor in plan.values():
+        for r in floor["rooms"]:
+            x, y, w, h = r["x"], r["y"], r["w"], r["h"]
+            if deg == 180:
+                nx, ny, nw, nh = -(x + w), -(y + h), w, h
+            elif deg == 90:            # clockwise
+                nx, ny, nw, nh = -(y + h), x, h, w
+            else:                      # 270 clockwise = 90 counter-clockwise
+                nx, ny, nw, nh = y, -(x + w), h, w
+            r["x"], r["y"], r["w"], r["h"] = round(nx, 2), round(ny, 2), round(nw, 2), round(nh, 2)
+    _shift_to_origin(plan)
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -231,8 +256,12 @@ def main(argv: Optional[list[str]] = None) -> int:
                     help="SweetHome3D .sh3d file, XML, or JSON export (- for stdin)")
     ap.add_argument("--scale", type=float, default=1.0,
                     help="multiply every coordinate (default 1.0; SweetHome3D units are cm)")
-    ap.add_argument("--floor", default="main",
-                    help="floor name for rooms with no SweetHome3D level (default: main)")
+    ap.add_argument("--floor", default="1f",
+                    help="floor key for rooms with no SweetHome3D level (default: 1f — "
+                         "JARVIS's Residence tab uses 1f / 2f / bsmt)")
+    ap.add_argument("--rotate", type=int, choices=(0, 90, 180, 270), default=0,
+                    help="rotate the whole plan clockwise by this many degrees "
+                         "(180 fixes a plan that comes out with front/back and left/right swapped)")
     ap.add_argument("--origin-zero", action="store_true",
                     help="translate the plan so its top-left corner is (0, 0)")
     ap.add_argument("--as-config-string", action="store_true",
@@ -246,6 +275,8 @@ def main(argv: Optional[list[str]] = None) -> int:
         return 1
 
     plan = convert(home, scale=args.scale, default_floor=args.floor)
+    if args.rotate:
+        _rotate_plan(plan, args.rotate)
     if args.origin_zero:
         _shift_to_origin(plan)
 
