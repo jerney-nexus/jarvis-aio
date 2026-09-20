@@ -92,7 +92,7 @@ const JARVIS3D = (function () {
   }
   function project(p, thetaDeg) {
     var r = rot(p, thetaDeg * Math.PI / 180);
-    return [r[0] * SCALE, -(r[1] * Math.sin(PITCH) + r[2] * Math.cos(PITCH)) * SCALE];
+    return [-r[0] * SCALE, -(r[1] * Math.sin(PITCH) + r[2] * Math.cos(PITCH)) * SCALE];
   }
   function faceDepth(face, thetaDeg) {
     var t = thetaDeg * Math.PI / 180, cy = 0, cz = 0, n = face.p.length, i, r;
