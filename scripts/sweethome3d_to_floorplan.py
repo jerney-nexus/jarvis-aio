@@ -3,7 +3,9 @@
 
 The Residence tab stores its plan under the `floor_plan_rooms` config key as
 
-    {"<floor>": {"rooms": [{"name", "x", "y", "w", "h", "type"}, ...], "labels": [...]} }
+    {"<floor>": {"rooms": [{"name": "...", "x": 0, "y": 0, "w": 0, "h": 0, "type": "..."}, ...], "labels": [...]}}
+
+Rooms may additionally include an optional ``"points": [[x, y], ...]`` polygon.
 
 (see `custom_components/jarvis/residence_graph.py`, which reads it to derive
 room adjacency). SweetHome3D, by contrast, describes a home as a set of wall
