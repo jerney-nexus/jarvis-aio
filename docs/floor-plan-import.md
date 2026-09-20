@@ -73,9 +73,12 @@ python3 scripts/sweethome3d_to_floorplan.py "plan.sh3d" --as-config-string
 # SweetHome3D units are centimetres; scale down and re-origin to (0,0):
 python3 scripts/sweethome3d_to_floorplan.py "plan.sh3d" --scale 0.5 --origin-zero
 
-# If the plan imports mirrored/rotated vs the house model, rotate it clockwise
-# (180 swaps front/back and left/right at once):
+# If the plan imports rotated vs the house model, rotate it clockwise
+# (180 swaps front/back and left/right together):
 python3 scripts/sweethome3d_to_floorplan.py "plan.sh3d" --rotate 180 --origin-zero
+
+# If the plan imports as a true mirror image (rotation can't fix that), reflect it:
+python3 scripts/sweethome3d_to_floorplan.py "plan.sh3d" --mirror x --origin-zero
 ```
 
 Then paste the JSON onto the Residence tab (or into the `floor_plan_rooms`
@@ -87,6 +90,15 @@ The Residence tab's floor tabs are keyed **`1f`** (1st floor), **`2f`**, and
 **`bsmt`** — a plan keyed anything else (the old default was `main`) loads but
 shows on no tab, so it looks like nothing happened. Rooms without a SweetHome3D
 level now default to **`1f`**; override with `--floor` if you need `2f`/`bsmt`.
+
+### Rotated vs. mirrored imports
+
+If the plan comes out turned relative to the house model, `--rotate 90|180|270`
+turns it clockwise (180 swaps front/back and left/right together). But if the
+plan is a true **mirror image** — e.g. what should be the left side of the
+house shows up on the right, no matter which `--rotate` value you try — no
+rotation can fix it, because rotating a mirrored plan keeps it mirrored.
+Use `--mirror x` (flip left/right) or `--mirror y` (flip front/back) instead.
 
 ### Prefer the `.sh3d` file over an HTML/plugin export
 

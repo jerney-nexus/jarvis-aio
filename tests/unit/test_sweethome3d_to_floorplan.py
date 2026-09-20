@@ -267,3 +267,41 @@ def test_shift_to_origin_translates_points(conv):
     conv._shift_to_origin(plan)
     r = plan["1f"]["rooms"][0]
     assert r["points"] == [[0, 0], [20, 0], [10, 20]]
+
+
+# ── mirroring (rotation can't undo a true mirror image) ──────────────────────
+
+def test_mirror_x_flips_left_right(conv):
+    home = {"room": [{"name": "R", "points": [[0, 0], [100, 0], [50, 50]]}]}
+    plan = conv.convert(home, scale=1.0, default_floor="1f")
+    conv._mirror_plan(plan, "x")
+    r = plan["1f"]["rooms"][0]
+    assert (r["x"], r["y"], r["w"], r["h"]) == (0, 0, 100, 50)
+    assert r["points"] == [[100, 0], [0, 0], [50, 50]]
+
+
+def test_mirror_y_flips_front_back(conv):
+    home = {"room": [{"name": "R", "points": [[0, 0], [100, 0], [50, 50]]}]}
+    plan = conv.convert(home, scale=1.0, default_floor="1f")
+    conv._mirror_plan(plan, "y")
+    r = plan["1f"]["rooms"][0]
+    assert (r["x"], r["y"], r["w"], r["h"]) == (0, 0, 100, 50)
+    assert r["points"] == [[0, 50], [100, 50], [50, 0]]
+
+
+def test_mirror_twice_restores_original(conv):
+    # A rotation can never undo a reflection, but two reflections cancel out.
+    home = {"room": [{"name": "R", "points": [[0, 0], [100, 0], [50, 50]]}]}
+    plan = conv.convert(home, scale=1.0, default_floor="1f")
+    before = json.dumps(plan, sort_keys=True)
+    conv._mirror_plan(plan, "x")
+    conv._mirror_plan(plan, "x")
+    assert json.dumps(plan, sort_keys=True) == before
+
+
+def test_cli_mirror_flag(conv, tmp_path):
+    p = tmp_path / "home.json"
+    p.write_text(json.dumps({"home": {"room": [
+        {"name": "R", "points": [[0, 0], [100, 0], [50, 50]]}]}}), encoding="utf-8")
+    rc = conv.main([str(p), "--mirror", "x"])
+    assert rc == 0

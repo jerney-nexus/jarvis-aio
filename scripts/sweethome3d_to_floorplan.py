@@ -49,8 +49,12 @@ Notes
   otherwise everything lands on a single floor (`--floor`, default "1f" — the
   Residence tab's floor keys are 1f / 2f / bsmt, so a plan keyed anything else
   shows on no floor tab).
-* `--rotate 90|180|270` turns the whole plan clockwise if it imports mirrored or
-  rotated relative to the house model (180 swaps front/back and left/right).
+* `--rotate 90|180|270` turns the whole plan clockwise if it imports rotated
+  relative to the house model (180 swaps front/back and left/right together).
+  Rotation can't fix a plan that's a true **mirror image** of the house, though
+  — that has the opposite chirality, which no amount of rotating restores. If
+  the plan still looks flipped after trying every `--rotate` value, use
+  `--mirror x` (flip left/right) or `--mirror y` (flip front/back) instead.
 * If the plan contains no `room` polygons — a SweetHome3D file can be all walls
   and furniture with no rooms drawn — there is nothing to convert. Draw rooms in
   SweetHome3D first (Plan menu -> Create rooms, or double-click inside a closed
@@ -265,8 +269,10 @@ def _shift_to_origin(plan: dict[str, dict]) -> None:
 def _rotate_plan(plan: dict[str, dict], degrees: int) -> None:
     """Rotate the whole plan clockwise by 0/90/180/270°, keeping every room
     axis-aligned, then re-origin to (0, 0). Use it when the imported plan comes
-    out mirrored/rotated relative to the house model on the Residence tab —
-    180° swaps front↔back and left↔right at once."""
+    out rotated relative to the house model on the Residence tab — 180° swaps
+    front↔back and left↔right together. This can't fix a plan that's a true
+    mirror image (see `_mirror_plan`): rotation preserves chirality, so no
+    number of 90/180/270 turns will undo a reflection."""
     deg = degrees % 360
     if deg == 0:
         return
@@ -292,6 +298,27 @@ def _rotate_plan(plan: dict[str, dict], degrees: int) -> None:
     _shift_to_origin(plan)
 
 
+def _mirror_plan(plan: dict[str, dict], axis: str) -> None:
+    """Reflect the whole plan across `axis` ('x' or 'y'), then re-origin.
+    Rotation can't fix a plan that's a true mirror image of the house — any
+    number of 90/180/270 rotations preserve chirality, so a left-right (or
+    front-back) swap needs an actual reflection instead."""
+    for floor in plan.values():
+        for r in floor["rooms"]:
+            x, y, w, h = r["x"], r["y"], r["w"], r["h"]
+            if axis == "x":
+                nx, ny = -(x + w), y
+            else:
+                nx, ny = x, -(y + h)
+            r["x"], r["y"] = round(nx, 2), round(ny, 2)
+            if r.get("points"):
+                if axis == "x":
+                    r["points"] = [[round(-px, 2), round(py, 2)] for px, py in r["points"]]
+                else:
+                    r["points"] = [[round(px, 2), round(-py, 2)] for px, py in r["points"]]
+    _shift_to_origin(plan)
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -304,7 +331,13 @@ def main(argv: Optional[list[str]] = None) -> int:
                          "JARVIS's Residence tab uses 1f / 2f / bsmt)")
     ap.add_argument("--rotate", type=int, choices=(0, 90, 180, 270), default=0,
                     help="rotate the whole plan clockwise by this many degrees "
-                         "(180 fixes a plan that comes out with front/back and left/right swapped)")
+                         "(180 swaps front/back AND left/right together; it cannot fix "
+                         "a plan that's a true mirror image — use --mirror for that)")
+    ap.add_argument("--mirror", choices=("x", "y"), default=None,
+                    help="reflect the plan across the x or y axis (x flips left/right, "
+                         "y flips front/back). Use this when the imported plan is a true "
+                         "mirror image of the house — rotation alone can never fix that, "
+                         "since rotating a mirrored plan keeps it mirrored")
     ap.add_argument("--origin-zero", action="store_true",
                     help="translate the plan so its top-left corner is (0, 0)")
     ap.add_argument("--as-config-string", action="store_true",
@@ -318,6 +351,8 @@ def main(argv: Optional[list[str]] = None) -> int:
         return 1
 
     plan = convert(home, scale=args.scale, default_floor=args.floor)
+    if args.mirror:
+        _mirror_plan(plan, args.mirror)
     if args.rotate:
         _rotate_plan(plan, args.rotate)
     if args.origin_zero:
