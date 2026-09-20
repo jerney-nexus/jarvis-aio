@@ -118,8 +118,12 @@ def _parse_xml_home(text: str) -> dict:
     for rm in root.iter("room"):
         pts: list[list[float]] = []
         for pt in rm.findall("point"):
+            x_text = pt.get("x")
+            y_text = pt.get("y")
+            if x_text is None or y_text is None:
+                continue
             try:
-                pts.append([float(pt.get("x")), float(pt.get("y"))])
+                pts.append([float(x_text), float(y_text)])
             except (TypeError, ValueError):
                 continue
         rooms.append({"name": rm.get("name") or "",
