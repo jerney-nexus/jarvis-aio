@@ -88,7 +88,7 @@ const JARVIS3D = (function () {
   function rot(p, t) {
     var x = p[0] - CENTER[0], y = p[1] - CENTER[1], z = p[2] - CENTER[2];
     var c = Math.cos(t), s = Math.sin(t);
-    return [x * c - y * s, +x * s + y * c, z]; // rotated (rx, ry, z)
+    return [x * c - y * s, x * s + y * c, z]; // rotated (rx, ry, z)
   }
   function project(p, thetaDeg) {
     var r = rot(p, thetaDeg * Math.PI / 180);
