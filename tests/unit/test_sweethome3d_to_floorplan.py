@@ -23,7 +23,9 @@ def test_rooms_become_bounding_boxes(conv):
     ]}
     plan = conv.convert(home, scale=1.0, default_floor="main")
     rooms = {r["name"]: r for r in plan["main"]["rooms"]}
-    assert rooms["Living Room"] == {"name": "Living Room", "x": 0, "y": 0, "w": 400, "h": 300}
+    living = rooms["Living Room"]
+    assert (living["x"], living["y"], living["w"], living["h"]) == (0, 0, 400, 300)
+    assert living["points"] == [[0, 0], [400, 0], [400, 300], [0, 300]]
     assert rooms["Kitchen"]["x"] == 400 and rooms["Kitchen"]["w"] == 300
 
 
@@ -47,6 +49,7 @@ def test_scale_and_origin_zero(conv):
     conv._shift_to_origin(plan)
     r = plan["main"]["rooms"][0]
     assert (r["x"], r["y"], r["w"], r["h"]) == (0, 0, 100, 100)
+    assert r["points"] == [[0, 0], [100, 0], [100, 100], [0, 100]]
 
 
 def test_dict_points_and_auto_names(conv):
@@ -73,11 +76,13 @@ def test_degenerate_polygons_skipped(conv):
 
 
 def test_output_matches_floor_plan_rooms_schema(conv):
-    """Bounding boxes must have exactly the keys residence_graph._boxes reads."""
+    """Boxes must have residence_graph._boxes's keys plus points/type for the plan renderer."""
     home = {"room": [{"name": "X", "points": [[0, 0], [1, 0], [1, 1], [0, 1]]}]}
     plan = conv.convert(home, scale=1.0, default_floor="main")
     box = plan["main"]["rooms"][0]
-    assert set(box) == {"name", "x", "y", "w", "h"}
+    assert set(box) == {"name", "x", "y", "w", "h", "points", "type"}
+    assert box["type"] == "room"
+    assert box["points"] == [[0, 0], [1, 0], [1, 1], [0, 1]]
     assert plan["main"]["labels"] == []
     # round-trips through JSON string exactly as the config stores it
     assert json.loads(json.dumps(plan)) == plan
@@ -208,3 +213,29 @@ def test_rotate_zero_is_noop(conv):
     before = json.dumps(plan, sort_keys=True)
     conv._rotate_plan(plan, 0)
     assert json.dumps(plan, sort_keys=True) == before
+
+
+def test_rotate_180_transforms_points(conv):
+    home = {"room": [{"name": "R", "points": [[0, 0], [100, 0], [100, 50], [0, 50]]}]}
+    plan = conv.convert(home, scale=1.0, default_floor="1f")
+    conv._rotate_plan(plan, 180)
+    r = plan["1f"]["rooms"][0]
+    assert (r["x"], r["y"], r["w"], r["h"]) == (0, 0, 100, 50)
+    assert r["points"] == [[100, 50], [0, 50], [0, 0], [100, 0]]
+
+
+def test_rotate_90_transforms_points(conv):
+    home = {"room": [{"name": "R", "points": [[0, 0], [100, 0], [100, 50], [0, 50]]}]}
+    plan = conv.convert(home, scale=1.0, default_floor="1f")
+    conv._rotate_plan(plan, 90)
+    r = plan["1f"]["rooms"][0]
+    assert (r["x"], r["y"], r["w"], r["h"]) == (0, 0, 50, 100)
+    assert r["points"] == [[50, 0], [50, 100], [0, 100], [0, 0]]
+
+
+def test_shift_to_origin_translates_points(conv):
+    home = {"room": [{"name": "R", "points": [[10, 20], [30, 20], [30, 40], [10, 40]]}]}
+    plan = conv.convert(home, scale=1.0, default_floor="1f")
+    conv._shift_to_origin(plan)
+    r = plan["1f"]["rooms"][0]
+    assert r["points"] == [[0, 0], [20, 0], [20, 20], [0, 20]]

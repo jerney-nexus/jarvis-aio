@@ -7,15 +7,17 @@ inward from a breach point instead of treating every motion zone as equivalent.
 
 ## The format JARVIS expects
 
-`floor_plan_rooms` is a map of **floor name → rooms**, where each room is an
-axis-aligned box:
+`floor_plan_rooms` is a map of **floor name → rooms**, where each room has an
+axis-aligned bounding box plus, optionally, its exact polygon:
 
 ```json
 {
   "1F": {
     "rooms": [
-      { "name": "Living Room", "x": 0,   "y": 0, "w": 400, "h": 300 },
-      { "name": "Kitchen",     "x": 400, "y": 0, "w": 300, "h": 300 }
+      { "name": "Living Room", "x": 0,   "y": 0, "w": 400, "h": 300, "type": "room",
+        "points": [[0, 0], [400, 0], [400, 300], [0, 300]] },
+      { "name": "Kitchen",     "x": 400, "y": 0, "w": 300, "h": 300, "type": "room",
+        "points": [[400, 0], [700, 0], [700, 300], [400, 300]] }
     ],
     "labels": []
   }
@@ -24,6 +26,11 @@ axis-aligned box:
 
 * `x`, `y` are the box's top-left corner; `w`, `h` its width and height. The y
   axis increases **downward** (screen coordinates).
+* `points` is the room's actual polygon outline (a list of `[x, y]` vertices).
+  The Residence tab renders `points` when present — including non-rectangular
+  rooms — and falls back to the four corners of the bounding box when it's
+  omitted. `residence_graph.py`'s adjacency detection only looks at the
+  bounding box, so `points` is optional but recommended for accurate shapes.
 * `name` should match the Home Assistant **area** name (case/spacing-insensitive)
   so motion, which JARVIS knows by area, can be located on the plan.
 * Two rooms are treated as adjacent when their boxes touch or nearly touch, so
@@ -42,8 +49,9 @@ where the value happens to be persisted as a string. Editing the plan on the
 
 `scripts/sweethome3d_to_floorplan.py` turns a SweetHome3D plan into the format
 above. SweetHome3D describes a home as walls, doors/windows, furniture and —
-**when you draw them** — `room` polygons. The converter turns each room polygon
-into its bounding box, grouped by SweetHome3D level (floor).
+**when you draw them** — `room` polygons. The converter keeps each room's
+exact polygon (`points`) alongside its bounding box, grouped by SweetHome3D
+level (floor).
 
 It accepts three inputs, auto-detected:
 

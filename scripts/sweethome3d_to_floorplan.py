@@ -8,9 +8,11 @@ The Residence tab stores its plan under the `floor_plan_rooms` config key as
 (see `custom_components/jarvis/residence_graph.py`, which reads it to derive
 room adjacency). SweetHome3D, by contrast, describes a home as a set of wall
 segments, doors/windows, furniture and — when you draw them — `room` polygons.
-This helper reads a SweetHome3D plan and emits the axis-aligned bounding box of
-every room polygon in the shape JARVIS expects, so you can paste the result
-straight into the config instead of hand-escaping JSON.
+This helper reads a SweetHome3D plan and emits every room in the shape JARVIS
+expects: the room's exact polygon (`points`) alongside its axis-aligned
+bounding box (`x`/`y`/`w`/`h`, still needed by `residence_graph.py` for room
+adjacency), so you can paste the result straight into the config instead of
+hand-escaping JSON.
 
 Accepted inputs (auto-detected):
   * a native **.sh3d** file (SweetHome3D's own save file — a ZIP whose ``Home``
@@ -215,6 +217,9 @@ def convert(home: dict, *, scale: float, default_floor: str) -> dict[str, dict]:
             "y": round(y0 * scale, 2),
             "w": round((max(xs) - x0) * scale, 2),
             "h": round((max(ys) - y0) * scale, 2),
+            "type": "room",
+            # exact SweetHome3D polygon; the frontend prefers this over the bbox above
+            "points": [[round(px * scale, 2), round(py * scale, 2)] for px, py in pts],
         }
         plan.setdefault(floor, {"rooms": [], "labels": []})["rooms"].append(box)
     return plan
@@ -230,6 +235,8 @@ def _shift_to_origin(plan: dict[str, dict]) -> None:
     for r in boxes:
         r["x"] = round(r["x"] - dx, 2)
         r["y"] = round(r["y"] - dy, 2)
+        if r.get("points"):
+            r["points"] = [[round(px - dx, 2), round(py - dy, 2)] for px, py in r["points"]]
 
 
 def _rotate_plan(plan: dict[str, dict], degrees: int) -> None:
@@ -250,6 +257,15 @@ def _rotate_plan(plan: dict[str, dict], degrees: int) -> None:
             else:                      # 270 clockwise = 90 counter-clockwise
                 nx, ny, nw, nh = y, -(x + w), h, w
             r["x"], r["y"], r["w"], r["h"] = round(nx, 2), round(ny, 2), round(nw, 2), round(nh, 2)
+            if r.get("points"):
+                # same rotation as the bbox above, applied per vertex
+                if deg == 180:
+                    rot = lambda px, py: (-px, -py)
+                elif deg == 90:
+                    rot = lambda px, py: (-py, px)
+                else:
+                    rot = lambda px, py: (py, -px)
+                r["points"] = [[round(nx_, 2), round(ny_, 2)] for nx_, ny_ in (rot(px, py) for px, py in r["points"])]
     _shift_to_origin(plan)
 
 
