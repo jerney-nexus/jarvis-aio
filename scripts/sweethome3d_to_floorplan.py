@@ -195,18 +195,26 @@ def _level_names(home: dict) -> dict[str, str]:
     return names
 
 
-def _is_axis_aligned_rect(pts: list[tuple[float, float]]) -> bool:
-    """True if `pts` are exactly the 4 corners of their own bounding box, in any
-    order — i.e. a plain rectangle that the legacy x/y/w/h box already describes
-    exactly, so there's nothing a `points` polygon would add."""
+_RECT_TOLERANCE = 0.05  # SweetHome3D units (cm); absorbs its point-snapping rounding noise
+
+
+def _is_axis_aligned_rect(pts: list[tuple[float, float]], tol: float = _RECT_TOLERANCE) -> bool:
+    """True if `pts` are, within `tol`, the 4 corners of their own bounding box,
+    in any order — i.e. a plain rectangle that the legacy x/y/w/h box already
+    describes exactly, so there's nothing a `points` polygon would add."""
     if len(pts) != 4:
         return False
     xs = [p[0] for p in pts]
     ys = [p[1] for p in pts]
     x0, x1, y0, y1 = min(xs), max(xs), min(ys), max(ys)
-    corners = {(round(x0, 6), round(y0, 6)), (round(x1, 6), round(y0, 6)),
-               (round(x1, 6), round(y1, 6)), (round(x0, 6), round(y1, 6))}
-    return {(round(px, 6), round(py, 6)) for px, py in pts} == corners
+    corners = [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
+    unmatched = corners[:]
+    for px, py in pts:
+        match = next((c for c in unmatched if abs(px - c[0]) <= tol and abs(py - c[1]) <= tol), None)
+        if match is None:
+            return False
+        unmatched.remove(match)
+    return not unmatched
 
 
 def convert(home: dict, *, scale: float, default_floor: str) -> dict[str, dict]:

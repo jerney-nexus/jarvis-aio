@@ -105,6 +105,17 @@ def test_quadrilateral_that_isnt_a_rectangle_keeps_points(conv):
     assert "points" in plan["main"]["rooms"][0]
 
 
+def test_rectangle_with_rounding_noise_omits_points(conv):
+    # SweetHome3D sometimes stores a corner a hair off due to snapping/rounding
+    # (e.g. y=622.96265 vs y=622.9751, a 0.0125 discrepancy) -- still a rectangle.
+    home = {"room": [{"name": "Treppe", "points": [
+        [743.66797, 622.96265], [743.66797, 392.9751],
+        [843.66797, 392.9751], [843.66797, 622.9751],
+    ]}]}
+    plan = conv.convert(home, scale=1.0, default_floor="main")
+    assert "points" not in plan["main"]["rooms"][0]
+
+
 # ── native .sh3d / XML input (issue #34: HTML/JSON export drops the room array) ──
 
 import io
