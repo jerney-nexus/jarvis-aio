@@ -3,16 +3,19 @@
 
 The Residence tab stores its plan under the `floor_plan_rooms` config key as
 
-    {"<floor>": {"rooms": [{"name", "x", "y", "w", "h"}, ...], "labels": [...]}}
+    {"<floor>": {"rooms": [{"name", "x", "y", "w", "h", "type"}, ...], "labels": [...]} }
 
 (see `custom_components/jarvis/residence_graph.py`, which reads it to derive
 room adjacency). SweetHome3D, by contrast, describes a home as a set of wall
 segments, doors/windows, furniture and — when you draw them — `room` polygons.
 This helper reads a SweetHome3D plan and emits every room in the shape JARVIS
-expects: the room's exact polygon (`points`) alongside its axis-aligned
-bounding box (`x`/`y`/`w`/`h`, still needed by `residence_graph.py` for room
-adjacency), so you can paste the result straight into the config instead of
-hand-escaping JSON.
+expects: an axis-aligned bounding box (`x`/`y`/`w`/`h`, still needed by
+`residence_graph.py` for room adjacency) plus a `type` tag, and adds the room's
+exact polygon (`points`) only when it is not just a plain rectangle. Many
+axis-aligned rooms are therefore emitted as `{name, x, y, w, h, type}` without
+`points`, which is intentional and keeps the config schema consistent
+with the frontend's normal room objects. You can paste the result straight into
+the config instead of hand-escaping JSON.
 
 Accepted inputs (auto-detected):
   * a native **.sh3d** file (SweetHome3D's own save file — a ZIP whose ``Home``
@@ -308,8 +311,10 @@ def _mirror_plan(plan: dict[str, dict], axis: str) -> None:
             x, y, w, h = r["x"], r["y"], r["w"], r["h"]
             if axis == "x":
                 nx, ny = -(x + w), y
-            else:
+            elif axis == "y":
                 nx, ny = x, -(y + h)
+            else:
+                raise ValueError(f"axis must be 'x' or 'y', got {axis!r}")
             r["x"], r["y"] = round(nx, 2), round(ny, 2)
             if r.get("points"):
                 if axis == "x":

@@ -12,12 +12,10 @@ axis-aligned bounding box plus, optionally, its exact polygon:
 
 ```json
 {
-  "1F": {
+  "1f": {
     "rooms": [
-      { "name": "Living Room", "x": 0,   "y": 0, "w": 400, "h": 300, "type": "room",
-        "points": [[0, 0], [400, 0], [400, 300], [0, 300]] },
-      { "name": "Kitchen",     "x": 400, "y": 0, "w": 300, "h": 300, "type": "room",
-        "points": [[400, 0], [700, 0], [700, 300], [400, 300]] }
+      { "name": "Living Room", "x": 0,   "y": 0, "w": 400, "h": 300, "type": "room" },
+      { "name": "Kitchen",     "x": 400, "y": 0, "w": 300, "h": 300, "type": "room" }
     ],
     "labels": []
   }
