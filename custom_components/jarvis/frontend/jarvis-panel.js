@@ -88,7 +88,7 @@ const JARVIS3D = (function () {
   function rot(p, t) {
     var x = p[0] - CENTER[0], y = p[1] - CENTER[1], z = p[2] - CENTER[2];
     var c = Math.cos(t), s = Math.sin(t);
-    return [x * c + y * s, -x * s + y * c, z]; // rotated (rx, ry, z)
+    return [x * c - y * s, +x * s + y * c, z]; // rotated (rx, ry, z)
   }
   function project(p, thetaDeg) {
     var r = rot(p, thetaDeg * Math.PI / 180);
@@ -2977,7 +2977,7 @@ class JarvisPanel extends HTMLElement {
     el._dragWired = true;
     let dragging = false, lastX = 0, raf = null;
     const schedule = () => { if (!raf) raf = requestAnimationFrame(() => { raf = null; this._refreshEditorPreview(); }); };
-    const move = (e) => { if (!dragging) return; const p = (e.touches && e.touches[0]) ? e.touches[0] : e; if (e.cancelable) e.preventDefault(); this._editorTheta += (p.clientX - lastX) * 0.6; lastX = p.clientX; schedule(); };
+    const move = (e) => { if (!dragging) return; const p = (e.touches && e.touches[0]) ? e.touches[0] : e; if (e.cancelable) e.preventDefault(); this._editorTheta -= (p.clientX - lastX) * 0.6; lastX = p.clientX; schedule(); };
     const up = () => { dragging = false; el.classList.remove('dragging'); window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up); window.removeEventListener('touchmove', move); window.removeEventListener('touchend', up); };
     const down = (e) => { dragging = true; lastX = ((e.touches && e.touches[0]) ? e.touches[0] : e).clientX; el.classList.add('dragging'); window.addEventListener('mousemove', move); window.addEventListener('mouseup', up); window.addEventListener('touchmove', move, { passive: false }); window.addEventListener('touchend', up); };
     el.addEventListener('mousedown', down); el.addEventListener('touchstart', down, { passive: true });
@@ -3382,7 +3382,7 @@ class JarvisPanel extends HTMLElement {
         if (axis === 'y') { dragging = false; return; }  // release to the page scroller
       }
       if (e.cancelable) e.preventDefault();    // horizontal → keep the page from scrolling
-      this._house3dTheta += (p.clientX - lastX) * 0.5;
+      this._house3dTheta -= (p.clientX - lastX) * 0.5;
       lastX = p.clientX;
       schedule();
     };
