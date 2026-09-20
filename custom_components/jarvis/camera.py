@@ -1304,6 +1304,17 @@ async def async_analyze_camera(
         )
     except Exception:
         pass
+    # Pattern learning — the vision model's semantic verdict (delivery / person /
+    # vehicle / animal …) is the richest camera signal there is; record it as a
+    # normalised, de-duped learnable event so routines like "a package arrives
+    # midday" or "someone at the door → porch light" can be mined. (v7.97.0)
+    try:
+        from . import camera_learning
+        camera_learning.record_camera_event(
+            hass, camera_entity=entity_id, label=judgment["category"], source="vision",
+        )
+    except Exception:
+        pass
     # Proactive-briefing snapshot record
     try:
         from .proactive_briefing import record_snapshot
@@ -1478,6 +1489,18 @@ def register_event_listeners(hass: HomeAssistant) -> list:
         unsubs.append(hass.bus.async_listen("frigate_event", lambda e: _handle_frigate_event(hass, e)))
     except Exception as exc:
         _LOGGER.debug("JARVIS: could not subscribe to frigate_event: %s", exc)
+
+    # Learn from what the cameras see: turn each jarvis_camera_event (the
+    # semantic Frigate/Nest detection above) into a normalised, de-duped,
+    # learnable event in the pattern store — so "front door sees a person ~5:40pm"
+    # and "driveway sees a vehicle → garage opens" become minable routines rather
+    # than raw snapshot churn. (v7.97.0)
+    try:
+        from . import camera_learning
+        unsubs.append(hass.bus.async_listen(
+            "jarvis_camera_event", lambda e: camera_learning.on_camera_event(hass, e)))
+    except Exception as exc:
+        _LOGGER.debug("JARVIS: could not subscribe camera learning: %s", exc)
 
     _LOGGER.info("JARVIS: camera event listeners registered (%d subscriptions)", len(unsubs))
     return unsubs
