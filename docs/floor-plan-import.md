@@ -26,11 +26,12 @@ axis-aligned bounding box plus, optionally, its exact polygon:
 
 * `x`, `y` are the box's top-left corner; `w`, `h` its width and height. The y
   axis increases **downward** (screen coordinates).
-* `points` is the room's actual polygon outline (a list of `[x, y]` vertices).
-  The Residence tab renders `points` when present — including non-rectangular
-  rooms — and falls back to the four corners of the bounding box when it's
-  omitted. `residence_graph.py`'s adjacency detection only looks at the
-  bounding box, so `points` is optional but recommended for accurate shapes.
+* `points` is the room's actual polygon outline (a list of `[x, y]` vertices),
+  present only for non-rectangular rooms — a plain rectangle is already fully
+  described by its bounding box, so `points` is omitted for those. The
+  Residence tab renders `points` when present and falls back to the four
+  corners of the bounding box otherwise. `residence_graph.py`'s adjacency
+  detection only looks at the bounding box.
 * `name` should match the Home Assistant **area** name (case/spacing-insensitive)
   so motion, which JARVIS knows by area, can be located on the plan.
 * Two rooms are treated as adjacent when their boxes touch or nearly touch, so

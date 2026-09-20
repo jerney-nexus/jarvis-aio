@@ -195,6 +195,20 @@ def _level_names(home: dict) -> dict[str, str]:
     return names
 
 
+def _is_axis_aligned_rect(pts: list[tuple[float, float]]) -> bool:
+    """True if `pts` are exactly the 4 corners of their own bounding box, in any
+    order — i.e. a plain rectangle that the legacy x/y/w/h box already describes
+    exactly, so there's nothing a `points` polygon would add."""
+    if len(pts) != 4:
+        return False
+    xs = [p[0] for p in pts]
+    ys = [p[1] for p in pts]
+    x0, x1, y0, y1 = min(xs), max(xs), min(ys), max(ys)
+    corners = {(round(x0, 6), round(y0, 6)), (round(x1, 6), round(y0, 6)),
+               (round(x1, 6), round(y1, 6)), (round(x0, 6), round(y1, 6))}
+    return {(round(px, 6), round(py, 6)) for px, py in pts} == corners
+
+
 def convert(home: dict, *, scale: float, default_floor: str) -> dict[str, dict]:
     level_names = _level_names(home)
     plan: dict[str, dict] = {}
@@ -218,9 +232,10 @@ def convert(home: dict, *, scale: float, default_floor: str) -> dict[str, dict]:
             "w": round((max(xs) - x0) * scale, 2),
             "h": round((max(ys) - y0) * scale, 2),
             "type": "room",
-            # exact SweetHome3D polygon; the frontend prefers this over the bbox above
-            "points": [[round(px * scale, 2), round(py * scale, 2)] for px, py in pts],
         }
+        if not _is_axis_aligned_rect(pts):
+            # exact SweetHome3D polygon; the frontend prefers this over the bbox above
+            box["points"] = [[round(px * scale, 2), round(py * scale, 2)] for px, py in pts]
         plan.setdefault(floor, {"rooms": [], "labels": []})["rooms"].append(box)
     return plan
 

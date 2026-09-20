@@ -25,7 +25,7 @@ def test_rooms_become_bounding_boxes(conv):
     rooms = {r["name"]: r for r in plan["main"]["rooms"]}
     living = rooms["Living Room"]
     assert (living["x"], living["y"], living["w"], living["h"]) == (0, 0, 400, 300)
-    assert living["points"] == [[0, 0], [400, 0], [400, 300], [0, 300]]
+    assert "points" not in living   # a plain rectangle needs no polygon override
     assert rooms["Kitchen"]["x"] == 400 and rooms["Kitchen"]["w"] == 300
 
 
@@ -49,7 +49,7 @@ def test_scale_and_origin_zero(conv):
     conv._shift_to_origin(plan)
     r = plan["main"]["rooms"][0]
     assert (r["x"], r["y"], r["w"], r["h"]) == (0, 0, 100, 100)
-    assert r["points"] == [[0, 0], [100, 0], [100, 100], [0, 100]]
+    assert "points" not in r
 
 
 def test_dict_points_and_auto_names(conv):
@@ -76,16 +76,33 @@ def test_degenerate_polygons_skipped(conv):
 
 
 def test_output_matches_floor_plan_rooms_schema(conv):
-    """Boxes must have residence_graph._boxes's keys plus points/type for the plan renderer."""
+    """Rectangular rooms keep residence_graph._boxes's bbox keys plus type, and
+    omit points since the bbox already describes them exactly."""
     home = {"room": [{"name": "X", "points": [[0, 0], [1, 0], [1, 1], [0, 1]]}]}
     plan = conv.convert(home, scale=1.0, default_floor="main")
     box = plan["main"]["rooms"][0]
-    assert set(box) == {"name", "x", "y", "w", "h", "points", "type"}
+    assert set(box) == {"name", "x", "y", "w", "h", "type"}
     assert box["type"] == "room"
-    assert box["points"] == [[0, 0], [1, 0], [1, 1], [0, 1]]
     assert plan["main"]["labels"] == []
     # round-trips through JSON string exactly as the config stores it
     assert json.loads(json.dumps(plan)) == plan
+
+
+def test_non_rectangular_rooms_keep_their_polygon(conv):
+    """A room whose points aren't just its bbox corners keeps the full polygon."""
+    home = {"room": [{"name": "L-Shape",
+                     "points": [[0, 0], [100, 0], [100, 50], [50, 50], [50, 100], [0, 100]]}]}
+    plan = conv.convert(home, scale=1.0, default_floor="main")
+    box = plan["main"]["rooms"][0]
+    assert set(box) == {"name", "x", "y", "w", "h", "type", "points"}
+    assert box["points"] == [[0, 0], [100, 0], [100, 50], [50, 50], [50, 100], [0, 100]]
+
+
+def test_quadrilateral_that_isnt_a_rectangle_keeps_points(conv):
+    # 4 points, but not the bbox corners (a trapezoid) -> still a real polygon.
+    home = {"room": [{"name": "Trapezoid", "points": [[0, 0], [100, 0], [80, 50], [20, 50]]}]}
+    plan = conv.convert(home, scale=1.0, default_floor="main")
+    assert "points" in plan["main"]["rooms"][0]
 
 
 # ── native .sh3d / XML input (issue #34: HTML/JSON export drops the room array) ──
@@ -216,26 +233,26 @@ def test_rotate_zero_is_noop(conv):
 
 
 def test_rotate_180_transforms_points(conv):
-    home = {"room": [{"name": "R", "points": [[0, 0], [100, 0], [100, 50], [0, 50]]}]}
+    home = {"room": [{"name": "R", "points": [[0, 0], [100, 0], [50, 50]]}]}
     plan = conv.convert(home, scale=1.0, default_floor="1f")
     conv._rotate_plan(plan, 180)
     r = plan["1f"]["rooms"][0]
     assert (r["x"], r["y"], r["w"], r["h"]) == (0, 0, 100, 50)
-    assert r["points"] == [[100, 50], [0, 50], [0, 0], [100, 0]]
+    assert r["points"] == [[100, 50], [0, 50], [50, 0]]
 
 
 def test_rotate_90_transforms_points(conv):
-    home = {"room": [{"name": "R", "points": [[0, 0], [100, 0], [100, 50], [0, 50]]}]}
+    home = {"room": [{"name": "R", "points": [[0, 0], [100, 0], [50, 50]]}]}
     plan = conv.convert(home, scale=1.0, default_floor="1f")
     conv._rotate_plan(plan, 90)
     r = plan["1f"]["rooms"][0]
     assert (r["x"], r["y"], r["w"], r["h"]) == (0, 0, 50, 100)
-    assert r["points"] == [[50, 0], [50, 100], [0, 100], [0, 0]]
+    assert r["points"] == [[50, 0], [50, 100], [0, 50]]
 
 
 def test_shift_to_origin_translates_points(conv):
-    home = {"room": [{"name": "R", "points": [[10, 20], [30, 20], [30, 40], [10, 40]]}]}
+    home = {"room": [{"name": "R", "points": [[10, 20], [30, 20], [20, 40]]}]}
     plan = conv.convert(home, scale=1.0, default_floor="1f")
     conv._shift_to_origin(plan)
     r = plan["1f"]["rooms"][0]
-    assert r["points"] == [[0, 0], [20, 0], [20, 20], [0, 20]]
+    assert r["points"] == [[0, 0], [20, 0], [10, 20]]
