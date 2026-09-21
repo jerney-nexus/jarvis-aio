@@ -151,7 +151,8 @@
           "directive_preset": "Predefinição de diretriz",
           "directive": "Diretriz personalizada (opcional, substitui a predefinição)",
           "llm_provider": "Conversation model provider",
-          "use_hass_api": "Ativar controle da casa (luzes, climatização, fechaduras etc.)"
+          "use_hass_api": "Ativar controle da casa (luzes, climatização, fechaduras etc.)",
+          "web_research_llm_fallback": "Permitir que a pesquisa na web escale para a busca na web do próprio LLM quando o backend padrão não encontrar nada"
         }
       },
       "core_model": {

@@ -151,7 +151,8 @@
           "directive_preset": "Richtlijn-voorinstelling",
           "directive": "Aangepaste richtlijn (optioneel, overschrijft voorinstelling)",
           "llm_provider": "Conversation model provider",
-          "use_hass_api": "Huisbediening inschakelen (verlichting, klimaat, sloten, enz.)"
+          "use_hass_api": "Huisbediening inschakelen (verlichting, klimaat, sloten, enz.)",
+          "web_research_llm_fallback": "Laat webonderzoek escaleren naar de eigen websearch van de LLM wanneer de standaardbackend niets vindt"
         }
       },
       "core_model": {

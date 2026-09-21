@@ -151,7 +151,8 @@
           "directive_preset": "Presetare directivă",
           "directive": "Directivă personalizată (opțional, suprascrie presetarea)",
           "llm_provider": "Conversation model provider",
-          "use_hass_api": "Activează controlul casei (lumini, climat, încuietori etc.)"
+          "use_hass_api": "Activează controlul casei (lumini, climat, încuietori etc.)",
+          "web_research_llm_fallback": "Permite cercetării web să treacă la căutarea web proprie a LLM-ului atunci când backend-ul implicit nu găsește nimic"
         }
       },
       "core_model": {
