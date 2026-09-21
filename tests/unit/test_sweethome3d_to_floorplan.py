@@ -23,7 +23,9 @@ def test_rooms_become_bounding_boxes(conv):
     ]}
     plan = conv.convert(home, scale=1.0, default_floor="main")
     rooms = {r["name"]: r for r in plan["main"]["rooms"]}
-    assert rooms["Living Room"] == {"name": "Living Room", "x": 0, "y": 0, "w": 400, "h": 300}
+    living = rooms["Living Room"]
+    assert (living["x"], living["y"], living["w"], living["h"]) == (0, 0, 400, 300)
+    assert "points" not in living   # a plain rectangle needs no polygon override
     assert rooms["Kitchen"]["x"] == 400 and rooms["Kitchen"]["w"] == 300
 
 
@@ -47,6 +49,7 @@ def test_scale_and_origin_zero(conv):
     conv._shift_to_origin(plan)
     r = plan["main"]["rooms"][0]
     assert (r["x"], r["y"], r["w"], r["h"]) == (0, 0, 100, 100)
+    assert "points" not in r
 
 
 def test_dict_points_and_auto_names(conv):
@@ -73,14 +76,44 @@ def test_degenerate_polygons_skipped(conv):
 
 
 def test_output_matches_floor_plan_rooms_schema(conv):
-    """Bounding boxes must have exactly the keys residence_graph._boxes reads."""
+    """Rectangular rooms keep residence_graph._boxes's bbox keys plus type, and
+    omit points since the bbox already describes them exactly."""
     home = {"room": [{"name": "X", "points": [[0, 0], [1, 0], [1, 1], [0, 1]]}]}
     plan = conv.convert(home, scale=1.0, default_floor="main")
     box = plan["main"]["rooms"][0]
-    assert set(box) == {"name", "x", "y", "w", "h"}
+    assert set(box) == {"name", "x", "y", "w", "h", "type"}
+    assert box["type"] == "room"
     assert plan["main"]["labels"] == []
     # round-trips through JSON string exactly as the config stores it
     assert json.loads(json.dumps(plan)) == plan
+
+
+def test_non_rectangular_rooms_keep_their_polygon(conv):
+    """A room whose points aren't just its bbox corners keeps the full polygon."""
+    home = {"room": [{"name": "L-Shape",
+                     "points": [[0, 0], [100, 0], [100, 50], [50, 50], [50, 100], [0, 100]]}]}
+    plan = conv.convert(home, scale=1.0, default_floor="main")
+    box = plan["main"]["rooms"][0]
+    assert set(box) == {"name", "x", "y", "w", "h", "type", "points"}
+    assert box["points"] == [[0, 0], [100, 0], [100, 50], [50, 50], [50, 100], [0, 100]]
+
+
+def test_quadrilateral_that_isnt_a_rectangle_keeps_points(conv):
+    # 4 points, but not the bbox corners (a trapezoid) -> still a real polygon.
+    home = {"room": [{"name": "Trapezoid", "points": [[0, 0], [100, 0], [80, 50], [20, 50]]}]}
+    plan = conv.convert(home, scale=1.0, default_floor="main")
+    assert "points" in plan["main"]["rooms"][0]
+
+
+def test_rectangle_with_rounding_noise_omits_points(conv):
+    # SweetHome3D sometimes stores a corner a hair off due to snapping/rounding
+    # (e.g. y=622.96265 vs y=622.9751, a 0.0125 discrepancy) -- still a rectangle.
+    home = {"room": [{"name": "Treppe", "points": [
+        [743.66797, 622.96265], [743.66797, 392.9751],
+        [843.66797, 392.9751], [843.66797, 622.9751],
+    ]}]}
+    plan = conv.convert(home, scale=1.0, default_floor="main")
+    assert "points" not in plan["main"]["rooms"][0]
 
 
 # ── native .sh3d / XML input (issue #34: HTML/JSON export drops the room array) ──
@@ -208,3 +241,67 @@ def test_rotate_zero_is_noop(conv):
     before = json.dumps(plan, sort_keys=True)
     conv._rotate_plan(plan, 0)
     assert json.dumps(plan, sort_keys=True) == before
+
+
+def test_rotate_180_transforms_points(conv):
+    home = {"room": [{"name": "R", "points": [[0, 0], [100, 0], [50, 50]]}]}
+    plan = conv.convert(home, scale=1.0, default_floor="1f")
+    conv._rotate_plan(plan, 180)
+    r = plan["1f"]["rooms"][0]
+    assert (r["x"], r["y"], r["w"], r["h"]) == (0, 0, 100, 50)
+    assert r["points"] == [[100, 50], [0, 50], [50, 0]]
+
+
+def test_rotate_90_transforms_points(conv):
+    home = {"room": [{"name": "R", "points": [[0, 0], [100, 0], [50, 50]]}]}
+    plan = conv.convert(home, scale=1.0, default_floor="1f")
+    conv._rotate_plan(plan, 90)
+    r = plan["1f"]["rooms"][0]
+    assert (r["x"], r["y"], r["w"], r["h"]) == (0, 0, 50, 100)
+    assert r["points"] == [[50, 0], [50, 100], [0, 50]]
+
+
+def test_shift_to_origin_translates_points(conv):
+    home = {"room": [{"name": "R", "points": [[10, 20], [30, 20], [20, 40]]}]}
+    plan = conv.convert(home, scale=1.0, default_floor="1f")
+    conv._shift_to_origin(plan)
+    r = plan["1f"]["rooms"][0]
+    assert r["points"] == [[0, 0], [20, 0], [10, 20]]
+
+
+# ── mirroring (rotation can't undo a true mirror image) ──────────────────────
+
+def test_mirror_x_flips_left_right(conv):
+    home = {"room": [{"name": "R", "points": [[0, 0], [100, 0], [50, 50]]}]}
+    plan = conv.convert(home, scale=1.0, default_floor="1f")
+    conv._mirror_plan(plan, "x")
+    r = plan["1f"]["rooms"][0]
+    assert (r["x"], r["y"], r["w"], r["h"]) == (0, 0, 100, 50)
+    assert r["points"] == [[100, 0], [0, 0], [50, 50]]
+
+
+def test_mirror_y_flips_front_back(conv):
+    home = {"room": [{"name": "R", "points": [[0, 0], [100, 0], [50, 50]]}]}
+    plan = conv.convert(home, scale=1.0, default_floor="1f")
+    conv._mirror_plan(plan, "y")
+    r = plan["1f"]["rooms"][0]
+    assert (r["x"], r["y"], r["w"], r["h"]) == (0, 0, 100, 50)
+    assert r["points"] == [[0, 50], [100, 50], [50, 0]]
+
+
+def test_mirror_twice_restores_original(conv):
+    # A rotation can never undo a reflection, but two reflections cancel out.
+    home = {"room": [{"name": "R", "points": [[0, 0], [100, 0], [50, 50]]}]}
+    plan = conv.convert(home, scale=1.0, default_floor="1f")
+    before = json.dumps(plan, sort_keys=True)
+    conv._mirror_plan(plan, "x")
+    conv._mirror_plan(plan, "x")
+    assert json.dumps(plan, sort_keys=True) == before
+
+
+def test_cli_mirror_flag(conv, tmp_path):
+    p = tmp_path / "home.json"
+    p.write_text(json.dumps({"home": {"room": [
+        {"name": "R", "points": [[0, 0], [100, 0], [50, 50]]}]}}), encoding="utf-8")
+    rc = conv.main([str(p), "--mirror", "x"])
+    assert rc == 0

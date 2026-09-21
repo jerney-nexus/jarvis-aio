@@ -3,14 +3,21 @@
 
 The Residence tab stores its plan under the `floor_plan_rooms` config key as
 
-    {"<floor>": {"rooms": [{"name", "x", "y", "w", "h"}, ...], "labels": [...]}}
+    {"<floor>": {"rooms": [{"name": "...", "x": 0, "y": 0, "w": 0, "h": 0, "type": "..."}, ...], "labels": [...]}}
+
+Rooms may additionally include an optional ``"points": [[x, y], ...]`` polygon.
 
 (see `custom_components/jarvis/residence_graph.py`, which reads it to derive
 room adjacency). SweetHome3D, by contrast, describes a home as a set of wall
 segments, doors/windows, furniture and — when you draw them — `room` polygons.
-This helper reads a SweetHome3D plan and emits the axis-aligned bounding box of
-every room polygon in the shape JARVIS expects, so you can paste the result
-straight into the config instead of hand-escaping JSON.
+This helper reads a SweetHome3D plan and emits every room in the shape JARVIS
+expects: an axis-aligned bounding box (`x`/`y`/`w`/`h`, still needed by
+`residence_graph.py` for room adjacency) plus a `type` tag, and adds the room's
+exact polygon (`points`) only when it is not just a plain rectangle. Many
+axis-aligned rooms are therefore emitted as `{name, x, y, w, h, type}` without
+`points`, which is intentional and keeps the config schema consistent
+with the frontend's normal room objects. You can paste the result straight into
+the config instead of hand-escaping JSON.
 
 Accepted inputs (auto-detected):
   * a native **.sh3d** file (SweetHome3D's own save file — a ZIP whose ``Home``
@@ -47,8 +54,12 @@ Notes
   otherwise everything lands on a single floor (`--floor`, default "1f" — the
   Residence tab's floor keys are 1f / 2f / bsmt, so a plan keyed anything else
   shows on no floor tab).
-* `--rotate 90|180|270` turns the whole plan clockwise if it imports mirrored or
-  rotated relative to the house model (180 swaps front/back and left/right).
+* `--rotate 90|180|270` turns the whole plan clockwise if it imports rotated
+  relative to the house model (180 swaps front/back and left/right together).
+  Rotation can't fix a plan that's a true **mirror image** of the house, though
+  — that has the opposite chirality, which no amount of rotating restores. If
+  the plan still looks flipped after trying every `--rotate` value, use
+  `--mirror x` (flip left/right) or `--mirror y` (flip front/back) instead.
 * If the plan contains no `room` polygons — a SweetHome3D file can be all walls
   and furniture with no rooms drawn — there is nothing to convert. Draw rooms in
   SweetHome3D first (Plan menu -> Create rooms, or double-click inside a closed
@@ -118,8 +129,12 @@ def _parse_xml_home(text: str) -> dict:
     for rm in root.iter("room"):
         pts: list[list[float]] = []
         for pt in rm.findall("point"):
+            x_text = pt.get("x")
+            y_text = pt.get("y")
+            if x_text is None or y_text is None:
+                continue
             try:
-                pts.append([float(pt.get("x")), float(pt.get("y"))])
+                pts.append([float(x_text), float(y_text)])
             except (TypeError, ValueError):
                 continue
         rooms.append({"name": rm.get("name") or "",
@@ -189,6 +204,28 @@ def _level_names(home: dict) -> dict[str, str]:
     return names
 
 
+_RECT_TOLERANCE = 0.05  # SweetHome3D units (cm); absorbs its point-snapping rounding noise
+
+
+def _is_axis_aligned_rect(pts: list[tuple[float, float]], tol: float = _RECT_TOLERANCE) -> bool:
+    """True if `pts` are, within `tol`, the 4 corners of their own bounding box,
+    in any order — i.e. a plain rectangle that the legacy x/y/w/h box already
+    describes exactly, so there's nothing a `points` polygon would add."""
+    if len(pts) != 4:
+        return False
+    xs = [p[0] for p in pts]
+    ys = [p[1] for p in pts]
+    x0, x1, y0, y1 = min(xs), max(xs), min(ys), max(ys)
+    corners = [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
+    unmatched = corners[:]
+    for px, py in pts:
+        match = next((c for c in unmatched if abs(px - c[0]) <= tol and abs(py - c[1]) <= tol), None)
+        if match is None:
+            return False
+        unmatched.remove(match)
+    return not unmatched
+
+
 def convert(home: dict, *, scale: float, default_floor: str) -> dict[str, dict]:
     level_names = _level_names(home)
     plan: dict[str, dict] = {}
@@ -211,7 +248,11 @@ def convert(home: dict, *, scale: float, default_floor: str) -> dict[str, dict]:
             "y": round(y0 * scale, 2),
             "w": round((max(xs) - x0) * scale, 2),
             "h": round((max(ys) - y0) * scale, 2),
+            "type": "room",
         }
+        if not _is_axis_aligned_rect(pts):
+            # exact SweetHome3D polygon; the frontend prefers this over the bbox above
+            box["points"] = [[round(px * scale, 2), round(py * scale, 2)] for px, py in pts]
         plan.setdefault(floor, {"rooms": [], "labels": []})["rooms"].append(box)
     return plan
 
@@ -226,13 +267,17 @@ def _shift_to_origin(plan: dict[str, dict]) -> None:
     for r in boxes:
         r["x"] = round(r["x"] - dx, 2)
         r["y"] = round(r["y"] - dy, 2)
+        if r.get("points"):
+            r["points"] = [[round(px - dx, 2), round(py - dy, 2)] for px, py in r["points"]]
 
 
 def _rotate_plan(plan: dict[str, dict], degrees: int) -> None:
     """Rotate the whole plan clockwise by 0/90/180/270°, keeping every room
     axis-aligned, then re-origin to (0, 0). Use it when the imported plan comes
-    out mirrored/rotated relative to the house model on the Residence tab —
-    180° swaps front↔back and left↔right at once."""
+    out rotated relative to the house model on the Residence tab — 180° swaps
+    front↔back and left↔right together. This can't fix a plan that's a true
+    mirror image (see `_mirror_plan`): rotation preserves chirality, so no
+    number of 90/180/270 turns will undo a reflection."""
     deg = degrees % 360
     if deg == 0:
         return
@@ -246,6 +291,38 @@ def _rotate_plan(plan: dict[str, dict], degrees: int) -> None:
             else:                      # 270 clockwise = 90 counter-clockwise
                 nx, ny, nw, nh = y, -(x + w), h, w
             r["x"], r["y"], r["w"], r["h"] = round(nx, 2), round(ny, 2), round(nw, 2), round(nh, 2)
+            if r.get("points"):
+                # same rotation as the bbox above, applied per vertex
+                if deg == 180:
+                    rot = lambda px, py: (-px, -py)
+                elif deg == 90:
+                    rot = lambda px, py: (-py, px)
+                else:
+                    rot = lambda px, py: (py, -px)
+                r["points"] = [[round(nx_, 2), round(ny_, 2)] for nx_, ny_ in (rot(px, py) for px, py in r["points"])]
+    _shift_to_origin(plan)
+
+
+def _mirror_plan(plan: dict[str, dict], axis: str) -> None:
+    """Reflect the whole plan across `axis` ('x' or 'y'), then re-origin.
+    Rotation can't fix a plan that's a true mirror image of the house — any
+    number of 90/180/270 rotations preserve chirality, so a left-right (or
+    front-back) swap needs an actual reflection instead."""
+    for floor in plan.values():
+        for r in floor["rooms"]:
+            x, y, w, h = r["x"], r["y"], r["w"], r["h"]
+            if axis == "x":
+                nx, ny = -(x + w), y
+            elif axis == "y":
+                nx, ny = x, -(y + h)
+            else:
+                raise ValueError(f"axis must be 'x' or 'y', got {axis!r}")
+            r["x"], r["y"] = round(nx, 2), round(ny, 2)
+            if r.get("points"):
+                if axis == "x":
+                    r["points"] = [[round(-px, 2), round(py, 2)] for px, py in r["points"]]
+                else:
+                    r["points"] = [[round(px, 2), round(-py, 2)] for px, py in r["points"]]
     _shift_to_origin(plan)
 
 
@@ -261,7 +338,13 @@ def main(argv: Optional[list[str]] = None) -> int:
                          "JARVIS's Residence tab uses 1f / 2f / bsmt)")
     ap.add_argument("--rotate", type=int, choices=(0, 90, 180, 270), default=0,
                     help="rotate the whole plan clockwise by this many degrees "
-                         "(180 fixes a plan that comes out with front/back and left/right swapped)")
+                         "(180 swaps front/back AND left/right together; it cannot fix "
+                         "a plan that's a true mirror image — use --mirror for that)")
+    ap.add_argument("--mirror", choices=("x", "y"), default=None,
+                    help="reflect the plan across the x or y axis (x flips left/right, "
+                         "y flips front/back). Use this when the imported plan is a true "
+                         "mirror image of the house — rotation alone can never fix that, "
+                         "since rotating a mirrored plan keeps it mirrored")
     ap.add_argument("--origin-zero", action="store_true",
                     help="translate the plan so its top-left corner is (0, 0)")
     ap.add_argument("--as-config-string", action="store_true",
@@ -275,6 +358,8 @@ def main(argv: Optional[list[str]] = None) -> int:
         return 1
 
     plan = convert(home, scale=args.scale, default_floor=args.floor)
+    if args.mirror:
+        _mirror_plan(plan, args.mirror)
     if args.rotate:
         _rotate_plan(plan, args.rotate)
     if args.origin_zero:

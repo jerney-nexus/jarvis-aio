@@ -7,15 +7,15 @@ inward from a breach point instead of treating every motion zone as equivalent.
 
 ## The format JARVIS expects
 
-`floor_plan_rooms` is a map of **floor name → rooms**, where each room is an
-axis-aligned box:
+`floor_plan_rooms` is a map of **floor name → rooms**, where each room has an
+axis-aligned bounding box plus, optionally, its exact polygon:
 
 ```json
 {
-  "1F": {
+  "1f": {
     "rooms": [
-      { "name": "Living Room", "x": 0,   "y": 0, "w": 400, "h": 300 },
-      { "name": "Kitchen",     "x": 400, "y": 0, "w": 300, "h": 300 }
+      { "name": "Living Room", "x": 0,   "y": 0, "w": 400, "h": 300, "type": "room" },
+      { "name": "Kitchen",     "x": 400, "y": 0, "w": 300, "h": 300, "type": "room" }
     ],
     "labels": []
   }
@@ -24,6 +24,12 @@ axis-aligned box:
 
 * `x`, `y` are the box's top-left corner; `w`, `h` its width and height. The y
   axis increases **downward** (screen coordinates).
+* `points` is the room's actual polygon outline (a list of `[x, y]` vertices),
+  present only for non-rectangular rooms — a plain rectangle is already fully
+  described by its bounding box, so `points` is omitted for those. The
+  Residence tab renders `points` when present and falls back to the four
+  corners of the bounding box otherwise. `residence_graph.py`'s adjacency
+  detection only looks at the bounding box.
 * `name` should match the Home Assistant **area** name (case/spacing-insensitive)
   so motion, which JARVIS knows by area, can be located on the plan.
 * Two rooms are treated as adjacent when their boxes touch or nearly touch, so
@@ -42,8 +48,9 @@ where the value happens to be persisted as a string. Editing the plan on the
 
 `scripts/sweethome3d_to_floorplan.py` turns a SweetHome3D plan into the format
 above. SweetHome3D describes a home as walls, doors/windows, furniture and —
-**when you draw them** — `room` polygons. The converter turns each room polygon
-into its bounding box, grouped by SweetHome3D level (floor).
+**when you draw them** — `room` polygons. The converter keeps each room's
+exact polygon (`points`) alongside its bounding box, grouped by SweetHome3D
+level (floor).
 
 It accepts three inputs, auto-detected:
 
@@ -64,9 +71,12 @@ python3 scripts/sweethome3d_to_floorplan.py "plan.sh3d" --as-config-string
 # SweetHome3D units are centimetres; scale down and re-origin to (0,0):
 python3 scripts/sweethome3d_to_floorplan.py "plan.sh3d" --scale 0.5 --origin-zero
 
-# If the plan imports mirrored/rotated vs the house model, rotate it clockwise
-# (180 swaps front/back and left/right at once):
+# If the plan imports rotated vs the house model, rotate it clockwise
+# (180 swaps front/back and left/right together):
 python3 scripts/sweethome3d_to_floorplan.py "plan.sh3d" --rotate 180 --origin-zero
+
+# If the plan imports as a true mirror image (rotation can't fix that), reflect it:
+python3 scripts/sweethome3d_to_floorplan.py "plan.sh3d" --mirror x --origin-zero
 ```
 
 Then paste the JSON onto the Residence tab (or into the `floor_plan_rooms`
@@ -78,6 +88,15 @@ The Residence tab's floor tabs are keyed **`1f`** (1st floor), **`2f`**, and
 **`bsmt`** — a plan keyed anything else (the old default was `main`) loads but
 shows on no tab, so it looks like nothing happened. Rooms without a SweetHome3D
 level now default to **`1f`**; override with `--floor` if you need `2f`/`bsmt`.
+
+### Rotated vs. mirrored imports
+
+If the plan comes out turned relative to the house model, `--rotate 90|180|270`
+turns it clockwise (180 swaps front/back and left/right together). But if the
+plan is a true **mirror image** — e.g. what should be the left side of the
+house shows up on the right, no matter which `--rotate` value you try — no
+rotation can fix it, because rotating a mirrored plan keeps it mirrored.
+Use `--mirror x` (flip left/right) or `--mirror y` (flip front/back) instead.
 
 ### Prefer the `.sh3d` file over an HTML/plugin export
 
