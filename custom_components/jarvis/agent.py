@@ -3022,6 +3022,18 @@ async def run_agent(
     except Exception:
         situation_now = ""
     situation_block = f"## Situation now\n{situation_now}\n\n" if situation_now else ""
+    # v7.98.0: a first-person recollection of what perception has taught JARVIS
+    # over the last few days (recorded camera events), distinct from the
+    # present-tense situation above — memory and continuity, not a live snapshot.
+    awareness_now = ""
+    try:
+        from . import awareness
+        awareness_now = await hass.async_add_executor_job(awareness.reflect, hass)
+    except Exception:
+        awareness_now = ""
+    awareness_block = (
+        f"## What I've noticed lately\n{awareness_now}\n\n" if awareness_now else ""
+    )
     # Inject cognitive core status
     cog_status = ""
     try:
@@ -3054,6 +3066,7 @@ async def run_agent(
         f"{_language_directive(hass)}"
         f"## Current home state\n{home_context}\n\n"
         f"{situation_block}"
+        f"{awareness_block}"
         f"{cog_status}\n\n"
         f"## Tools\n"
         f"You have tools to control devices, query states, search entities, "

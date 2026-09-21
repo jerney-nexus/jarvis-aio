@@ -1,3 +1,13 @@
+## [7.98.0] — camera learning gets *sharper* and JARVIS gains a memory of what it's noticed
+
+Three things, all building on 7.97.0's "learn from what the cameras see."
+
+**Per-resident attribution.** A learned `camera_event` for a *person* is now stamped with *who* — JARVIS consults the recognition cache for the most-recent, still-fresh face at that camera and records the resident's name and confidence onto the learnable row. So the pattern miner can move past "someone is at the front door around six" toward "*Sam* gets home around six on weekdays," and a proposed automation can key off the person, not just the presence of a person. Non-person detections (a vehicle, a package) are never attributed.
+
+**A confidence floor.** Detections that carry a score are now gated before they're recorded: anything below a configurable floor (`camera_event_min_confidence`, default 40 on a 0–100 scale; 0 disables it) is dropped, so a weak or uncertain hit never teaches a routine. Detectors that carry *no* score — Nest motion, the vision-analysis path — are never filtered on this basis, so nothing meaningful is lost.
+
+**A first-person recollection.** A new `awareness` module gives JARVIS a short memory of the household's recent rhythm, composed from the same learned `camera_event` rows. Injected into the agent's prompt as a **"What I've noticed lately"** block — "I've been seeing Sam at the front door around 6pm on weekdays," "I keep noticing a vehicle in the driveway in the evenings" — it is deliberately distinct from the present-tense *Situation now* block: that one says what's true this second; this one is remembered regularity over the last few days, drawn straight from the learning store so JARVIS's spoken awareness and its learned automations come from one memory, not two. The ranking and phrasing are pure, tested functions; the reader is fully guarded and never breaks a turn.
+
 ## [7.97.0] — JARVIS learns from what the cameras *see*
 
 Cameras are now a first-class source of *learnable* signal, not just live perception. Previously the semantic camera stream — Frigate/Nest object detections and JARVIS's own vision-analysis verdicts ("a delivery", "a person at the door", "a vehicle in the driveway") — was spoken and logged but never fed into the pattern learner; the only camera-derived data reaching learning was the raw `image.*` snapshot churn, which is unlearnable noise that buries real routines.
