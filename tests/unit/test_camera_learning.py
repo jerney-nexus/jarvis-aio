@@ -125,11 +125,77 @@ def test_record_skips_empty_label(cl, monkeypatch):
 def test_on_camera_event_reads_bus_payload(cl, monkeypatch):
     core = _fake_core(monkeypatch)
     monkeypatch.setattr(cl, "_DEDUPER", cl._Deduper())
+    monkeypatch.setattr(cl, "_min_confidence", lambda: 40.0)
 
     class _Ev:
-        data = {"entity_id": "camera.driveway", "label": "car", "source": "frigate"}
+        data = {"entity_id": "camera.driveway", "label": "car",
+                "source": "frigate", "confidence": 91}
 
     cl.on_camera_event(object(), _Ev())
     calls = core._CORE.state_logger.calls
     assert len(calls) == 1
     assert calls[0][0] == "camera_event.driveway" and calls[0][1] == "vehicle"
+
+
+# ── confidence floor ──────────────────────────────────────────────────────────
+def test_confidence_below_floor_is_dropped(cl, monkeypatch):
+    core = _fake_core(monkeypatch)
+    monkeypatch.setattr(cl, "_DEDUPER", cl._Deduper())
+    monkeypatch.setattr(cl, "_min_confidence", lambda: 40.0)
+    assert cl.record_camera_event(
+        object(), camera_entity="camera.x", label="person", confidence=25) is False
+    assert core._CORE.state_logger.calls == []
+
+
+def test_confidence_at_or_above_floor_records(cl, monkeypatch):
+    core = _fake_core(monkeypatch)
+    monkeypatch.setattr(cl, "_DEDUPER", cl._Deduper())
+    monkeypatch.setattr(cl, "_min_confidence", lambda: 40.0)
+    assert cl.record_camera_event(
+        object(), camera_entity="camera.x", label="person", confidence=40) is True
+    assert len(core._CORE.state_logger.calls) == 1
+
+
+def test_missing_confidence_is_not_filtered(cl, monkeypatch):
+    core = _fake_core(monkeypatch)
+    monkeypatch.setattr(cl, "_DEDUPER", cl._Deduper())
+    monkeypatch.setattr(cl, "_min_confidence", lambda: 99.0)
+    # No confidence supplied (e.g. Nest motion, or vision path) → recorded.
+    assert cl.record_camera_event(
+        object(), camera_entity="camera.x", label="person") is True
+    assert len(core._CORE.state_logger.calls) == 1
+
+
+# ── per-resident attribution ──────────────────────────────────────────────────
+def test_person_event_stamps_recognized_resident(cl, monkeypatch):
+    core = _fake_core(monkeypatch)
+    monkeypatch.setattr(cl, "_DEDUPER", cl._Deduper())
+    monkeypatch.setattr(cl, "_min_confidence", lambda: 0.0)
+    # Fake recognition: a known resident seen at this camera.
+    rec = types.ModuleType("jc.recognition")
+    rec.last_seen_at = lambda hass, cam: {"name": "Sam", "confidence": 88.0}
+    monkeypatch.setitem(sys.modules, "jc.recognition", rec)
+    monkeypatch.setattr(sys.modules["jc"], "recognition", rec, raising=False)
+
+    assert cl.record_camera_event(
+        object(), camera_entity="camera.front_door", label="person") is True
+    entity_id, new_state, kw = core._CORE.state_logger.calls[0]
+    assert new_state == "person"
+    assert kw.get("person") == "Sam"
+    assert kw.get("person_confidence") == 88.0
+
+
+def test_non_person_event_is_not_attributed(cl, monkeypatch):
+    core = _fake_core(monkeypatch)
+    monkeypatch.setattr(cl, "_DEDUPER", cl._Deduper())
+    monkeypatch.setattr(cl, "_min_confidence", lambda: 0.0)
+    # recognition shouldn't even be consulted for a vehicle, but make it loud if it is
+    rec = types.ModuleType("jc.recognition")
+    rec.last_seen_at = lambda hass, cam: {"name": "Sam", "confidence": 88.0}
+    monkeypatch.setitem(sys.modules, "jc.recognition", rec)
+    monkeypatch.setattr(sys.modules["jc"], "recognition", rec, raising=False)
+
+    cl.record_camera_event(object(), camera_entity="camera.driveway", label="car")
+    _, new_state, kw = core._CORE.state_logger.calls[0]
+    assert new_state == "vehicle"
+    assert kw.get("person") == "unknown"

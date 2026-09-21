@@ -64,6 +64,29 @@ _SKIP_LABELS = {"empty", "none", "nothing", "clear", "other", "unknown", "quiet"
 # burst of identical detections into a single "this happened around then".
 DEDUP_WINDOW_S = 300.0
 
+# Detections below this confidence (0–100, when the detector provides one) are
+# dropped before they're recorded, so a weak/uncertain hit never teaches a
+# routine. Configurable via jarvis_config "camera_event_min_confidence"; 0
+# disables the floor. Detectors that carry no confidence (e.g. Nest motion) are
+# never filtered on this basis.
+DEFAULT_MIN_CONFIDENCE = 40.0
+
+
+def _cfg(key: str, default):
+    try:
+        from . import jarvis_config
+        val = jarvis_config.get(key, default)
+        return val if val is not None else default
+    except Exception:
+        return default
+
+
+def _min_confidence() -> float:
+    try:
+        return float(_cfg("camera_event_min_confidence", DEFAULT_MIN_CONFIDENCE))
+    except (TypeError, ValueError):
+        return DEFAULT_MIN_CONFIDENCE
+
 
 def normalize_label(raw: object) -> Optional[str]:
     """Map a detector label to a semantic class, or None to skip.
@@ -135,25 +158,68 @@ def _camera_area(hass, entity_id: str) -> str:
     return ""
 
 
+def _resolve_person(hass, camera_entity: str) -> tuple[str, float]:
+    """Best-effort recognised resident at ``camera_entity`` → (name, confidence).
+
+    Uses the recognition cache's most-recent, still-fresh face for that camera so
+    a "person" detection can be learned per-resident ("when *Sam* gets home …").
+    Falls back to ('unknown', 0.0). Never raises."""
+    try:
+        from . import recognition
+        rec = recognition.last_seen_at(hass, camera_entity)
+        if isinstance(rec, dict):
+            name = str(rec.get("name") or "").strip()
+            if name and name.lower() not in ("unknown", "none", ""):
+                try:
+                    conf = float(rec.get("confidence") or 0.0)
+                except (TypeError, ValueError):
+                    conf = 0.0
+                return name, conf
+    except Exception:
+        pass
+    return "unknown", 0.0
+
+
 def record_camera_event(hass, *, camera_entity: str, label: object,
-                        source: str = "", person: Optional[str] = None,
+                        source: str = "", confidence: Optional[float] = None,
+                        person: Optional[str] = None,
                         now: Optional[float] = None) -> bool:
-    """Normalise, de-dup, and record one semantic camera detection as a
-    learnable ``state_changes`` row. Returns True if a row was written.
+    """Normalise, de-dup, confidence-gate, and record one semantic camera
+    detection as a learnable ``state_changes`` row. Returns True if written.
 
     ``camera_entity`` is the ``camera.*`` (or other) entity the detection came
     from; its HA area names the synthetic ``camera_event.<area>`` entity when
-    available, else a slug of the camera id. Never raises."""
+    available, else a slug of the camera id. ``confidence`` (0–100), when the
+    detector supplies it, is checked against the configured floor. For a
+    ``person`` detection the recognised resident is stamped so per-person
+    routines can be learned. Never raises."""
     try:
         norm = normalize_label(label)
         if not norm:
             return False
+
+        # Confidence floor — only when the detector actually gave a score.
+        if confidence is not None:
+            try:
+                c = float(confidence)
+            except (TypeError, ValueError):
+                c = None
+            if c is not None and c < _min_confidence():
+                _LOGGER.debug("camera_learning: dropped %s (conf %.0f < floor)",
+                              norm, c)
+                return False
+
         area_id = _camera_area(hass, camera_entity) if camera_entity else ""
         location = area_id or _slug((camera_entity or "").split(".", 1)[-1])
         entity_id = synthetic_entity_id(location)
         now_epoch = time.time() if now is None else float(now)
         if not _DEDUPER.should_record((entity_id, norm), now_epoch):
             return False
+
+        # Per-resident attribution for people, so the miner can learn who.
+        pconf = 0.0
+        if person is None and norm == "person" and camera_entity:
+            person, pconf = _resolve_person(hass, camera_entity)
 
         from . import cognitive_core
         core = getattr(cognitive_core, "_CORE", None)
@@ -166,11 +232,11 @@ def record_camera_event(hass, *, camera_entity: str, label: object,
             area_id=area_id,
             triggered_by="camera:" + (str(source) or "vision"),
             person=str(person) if person else "unknown",
-            person_confidence=0.0,
+            person_confidence=float(pconf or 0.0),
             force_include=True,
         )
-        _LOGGER.debug("camera_learning: recorded %s -> %s (area=%s, src=%s)",
-                      entity_id, norm, area_id or "?", source)
+        _LOGGER.debug("camera_learning: recorded %s -> %s (area=%s, src=%s, who=%s)",
+                      entity_id, norm, area_id or "?", source, person or "unknown")
         return True
     except Exception:  # noqa: BLE001 - learning must never break perception
         _LOGGER.debug("camera_learning: record failed", exc_info=True)
@@ -187,6 +253,7 @@ def on_camera_event(hass, event) -> None:
             camera_entity=str(data.get("entity_id") or ""),
             label=data.get("label"),
             source=str(data.get("source") or ""),
+            confidence=data.get("confidence"),
         )
     except Exception:  # noqa: BLE001
         _LOGGER.debug("camera_learning: on_camera_event failed", exc_info=True)
