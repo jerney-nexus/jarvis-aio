@@ -69,7 +69,8 @@ async def research(hass, query: str) -> dict:
         _LOGGER.debug("web_research(%r) failed: %s", q, exc)
         result = {"query": q, "error": f"lookup failed: {exc}"}
 
-    if result.get("error"):
+    err = str(result.get("error") or "")
+    if err and err.lower().startswith("no results"):
         grounded = await _llm_grounded_fallback(hass, q)
         if grounded:
             return grounded

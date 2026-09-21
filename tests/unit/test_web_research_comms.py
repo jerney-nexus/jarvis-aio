@@ -103,7 +103,7 @@ async def test_research_falls_back_to_gemini_grounding_when_ddg_empty(wr, monkey
     async def fake_grounded(hass, api_key, model, query):
         assert api_key == "fake-key"
         assert "president" in query.lower()
-        return "Donald Trump is the current U.S. president."
+        return "Example grounded answer from Gemini."
 
     monkeypatch.setattr(wr, "_duckduckgo", fake_ddg)
     monkeypatch.setattr(jarvis_config, "get",
@@ -115,7 +115,7 @@ async def test_research_falls_back_to_gemini_grounding_when_ddg_empty(wr, monkey
 
     out = await wr.research(fake_hass, "who is the current us president")
     assert "error" not in out
-    assert "Trump" in out["answer"]
+    assert "Example grounded answer" in out["answer"]
     assert out["backend"] == "gemini_grounding"
 
 
