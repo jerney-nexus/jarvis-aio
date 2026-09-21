@@ -91,7 +91,6 @@ async def test_research_falls_back_to_gemini_grounding_when_ddg_empty(wr, monkey
     import importlib
     jarvis_config = importlib.import_module("jc.jarvis_config")
     ha_secrets = importlib.import_module("jc.ha_secrets")
-    llm_provider = importlib.import_module("jc.llm_provider")
 
     async def fake_ddg(hass, q):
         return {"query": q, "error": "no results — try rephrasing, or this "
@@ -101,7 +100,7 @@ async def test_research_falls_back_to_gemini_grounding_when_ddg_empty(wr, monkey
         assert provider == "gemini"
         return "fake-key"
 
-    def fake_grounded(api_key, model, query):
+    async def fake_grounded(hass, api_key, model, query):
         assert api_key == "fake-key"
         assert "president" in query.lower()
         return "Donald Trump is the current U.S. president."
@@ -111,7 +110,7 @@ async def test_research_falls_back_to_gemini_grounding_when_ddg_empty(wr, monkey
                          lambda key, default=None: {"llm_provider": "gemini",
                                                      "model": "gemini-2.5-flash"}.get(key, default))
     monkeypatch.setattr(ha_secrets, "async_get_provider_key", fake_get_key)
-    monkeypatch.setattr(llm_provider, "gemini_grounded_search", fake_grounded)
+    monkeypatch.setattr(wr, "_gemini_grounded_search", fake_grounded)
 
     out = await wr.research(fake_hass, "who is the current us president")
     assert "error" not in out

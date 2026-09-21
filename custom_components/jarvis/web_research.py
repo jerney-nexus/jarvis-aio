@@ -99,9 +99,7 @@ async def _llm_grounded_fallback(hass, q: str) -> Optional[dict]:
         if not api_key:
             return None
 
-        from .llm_provider import gemini_grounded_search
-        text = await hass.async_add_executor_job(
-            gemini_grounded_search, api_key, model or "gemini-2.5-flash", q)
+        text = await _gemini_grounded_search(hass, api_key, model or "gemini-2.5-flash", q)
         if not text:
             return None
         return {
@@ -115,6 +113,59 @@ async def _llm_grounded_fallback(hass, q: str) -> Optional[dict]:
     except Exception as exc:
         _LOGGER.debug("llm grounded fallback for %r failed: %s", q, exc)
         return None
+
+
+_GEMINI_GENERATE_ENDPOINT = (
+    "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent")
+
+
+async def _gemini_grounded_search(hass, api_key: str, model: str, q: str) -> Optional[str]:
+    """Ask Gemini to answer using its own Google Search grounding tool.
+
+    Deliberately talks to Gemini's NATIVE generateContent REST endpoint, not
+    the OpenAI-compatible surface: as of writing, Google's own OpenAI-compat
+    `extra_body` docs list `google_search` grounding as supported for image
+    generation only, not for chat completions — so requesting it there is
+    silently ignored and the model just answers from its stale training data.
+    The native REST `tools: [{"google_search": {}}]` declaration is the
+    documented, working mechanism. One-shot, no conversation history, no
+    JARVIS tool declarations. Returns the answer text, or None on any
+    failure — never raises, this is a best-effort fallback."""
+    if not api_key or not model:
+        return None
+    import aiohttp
+    from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+    session = async_get_clientsession(hass)
+    url = _GEMINI_GENERATE_ENDPOINT.format(model=model)
+    body = {
+        "contents": [{
+            "role": "user",
+            "parts": [{"text": f"Search the web and answer concisely: {q}"}],
+        }],
+        "tools": [{"google_search": {}}],
+    }
+    try:
+        async with session.post(
+            url, params={"key": api_key}, json=body,
+            timeout=aiohttp.ClientTimeout(total=_TIMEOUT),
+        ) as resp:
+            if resp.status not in (200, 202):
+                _LOGGER.debug(
+                    "gemini grounded search returned HTTP %s", resp.status)
+                return None
+            data = await resp.json(content_type=None)
+    except Exception as exc:
+        _LOGGER.debug("gemini grounded search request failed: %s", exc)
+        return None
+
+    try:
+        parts = (data.get("candidates") or [{}])[0].get("content", {}).get("parts") or []
+        text = "".join(p.get("text", "") for p in parts if isinstance(p, dict)).strip()
+        return text or None
+    except Exception:
+        return None
+
 
 
 async def _duckduckgo(hass, q: str) -> dict:
