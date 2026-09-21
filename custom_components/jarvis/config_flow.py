@@ -36,6 +36,8 @@ from .const import (
     CONF_DIRECTIVE,
     CONF_DIRECTIVE_PRESET,
     CONF_USE_HASS_API,
+    CONF_WEB_RESEARCH_LLM_FALLBACK,
+    DEFAULT_WEB_RESEARCH_LLM_FALLBACK,
     CONF_BEDROOM_AREAS,
     CONF_BROADCAST_GROUP,
     CONF_NOTIFY_SERVICE,
@@ -671,6 +673,10 @@ class JarvisOptionsFlow(OptionsFlow):
                     options=[p for p in _PROVIDER_STEPS if await self._provider_configured(p)],
                     mode=selector.SelectSelectorMode.DROPDOWN)),
             vol.Optional(CONF_USE_HASS_API, description=self._sv(CONF_USE_HASS_API, True)):
+                selector.BooleanSelector(),
+            vol.Optional(CONF_WEB_RESEARCH_LLM_FALLBACK,
+                         description=self._sv(CONF_WEB_RESEARCH_LLM_FALLBACK,
+                                              DEFAULT_WEB_RESEARCH_LLM_FALLBACK)):
                 selector.BooleanSelector(),
         })
         return self.async_show_form(step_id="core", data_schema=schema)

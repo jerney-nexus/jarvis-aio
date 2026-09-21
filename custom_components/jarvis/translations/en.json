@@ -151,7 +151,8 @@
           "directive_preset": "Directive preset",
           "directive": "Custom directive (optional, overrides preset)",
           "llm_provider": "Conversation model provider",
-          "use_hass_api": "Enable home control (lights, climate, locks, etc.)"
+          "use_hass_api": "Enable home control (lights, climate, locks, etc.)",
+          "web_research_llm_fallback": "Let web research escalate to the LLM's own web search when the default backend finds nothing"
         }
       },
       "core_model": {

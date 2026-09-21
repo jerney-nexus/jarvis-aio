@@ -4897,6 +4897,10 @@ ${this._renderExcludedEntities(d)}
                    value="${this._esc(d.config?.searxng_url || '')}" placeholder="http://searxng.local:8080" autocomplete="off" />
           </div>
           <div class="cfg-row">
+            <label>Escalate to LLM web search</label>
+            <button class="toggle-btn ${(d.config?.web_research_llm_fallback) ? 'on' : 'off'}" data-cfg-key="web_research_llm_fallback" data-cfg-val="${(d.config?.web_research_llm_fallback) ? 'false' : 'true'}" title="When the backend above finds nothing, let JARVIS fall back to the configured LLM's own live web search (currently Gemini only). Off by default.">${(d.config?.web_research_llm_fallback) ? 'ON' : 'OFF'}</button>
+          </div>
+          <div class="cfg-row">
             <label>Calendar tight-gap (min)</label>
             <input class="cfg-field" type="number" min="0" max="120" data-cfg-key="calendar_tight_gap_min"
                    value="${this._esc(String(d.config?.calendar_tight_gap_min ?? 15))}" autocomplete="off" />

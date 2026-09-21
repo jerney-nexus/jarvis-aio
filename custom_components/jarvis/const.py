@@ -20,6 +20,12 @@ CONF_USE_HASS_API         = "use_hass_api"
 CONF_CAST_ANNOUNCE        = "cast_announce"
 CONF_DIRECTIVE            = "directive"
 CONF_DIRECTIVE_PRESET     = "directive_preset"
+# Opt-in: let web_research escalate to the configured LLM's own web-grounding
+# tool (currently Gemini only) when the primary backend (DDG/SearXNG) comes
+# back empty. Off by default — it's an extra LLM call the user hasn't
+# explicitly asked for, and only Gemini keys are billed per grounding call.
+CONF_WEB_RESEARCH_LLM_FALLBACK = "web_research_llm_fallback"
+DEFAULT_WEB_RESEARCH_LLM_FALLBACK = False
 
 # ─── v5.3 Observer Mode — area-registry-driven ───────────────────────────────
 #

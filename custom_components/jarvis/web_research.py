@@ -80,10 +80,15 @@ async def _llm_grounded_fallback(hass, q: str) -> Optional[dict]:
     """Fall back to the configured LLM's own live web-grounding when the
     primary backend (DDG/SearXNG) comes back empty — common for fast-moving
     or very recent facts DDG's Instant Answer API was never built to answer.
-    Only Gemini has a grounding path today; any other provider (or a missing
-    key) simply leaves the original error in place. Never raises."""
+    Opt-in (config: web_research_llm_fallback, off by default) — it's an
+    extra LLM call the user hasn't explicitly asked for. Only Gemini has a
+    grounding path today; any other provider (or a missing key) simply
+    leaves the original error in place. Never raises."""
     try:
         from . import jarvis_config, ha_secrets
+
+        if not _cfg("web_research_llm_fallback", False):
+            return None
 
         provider = str(jarvis_config.get("llm_provider", "groq") or "").lower()
         model = str(jarvis_config.get("model", "") or "")

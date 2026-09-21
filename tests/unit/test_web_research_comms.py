@@ -108,7 +108,8 @@ async def test_research_falls_back_to_gemini_grounding_when_ddg_empty(wr, monkey
     monkeypatch.setattr(wr, "_duckduckgo", fake_ddg)
     monkeypatch.setattr(jarvis_config, "get",
                          lambda key, default=None: {"llm_provider": "gemini",
-                                                     "model": "gemini-2.5-flash"}.get(key, default))
+                                                     "model": "gemini-2.5-flash",
+                                                     "web_research_llm_fallback": True}.get(key, default))
     monkeypatch.setattr(ha_secrets, "async_get_provider_key", fake_get_key)
     monkeypatch.setattr(wr, "_gemini_grounded_search", fake_grounded)
 
@@ -116,6 +117,27 @@ async def test_research_falls_back_to_gemini_grounding_when_ddg_empty(wr, monkey
     assert "error" not in out
     assert "Trump" in out["answer"]
     assert out["backend"] == "gemini_grounding"
+
+
+async def test_research_fallback_stays_off_by_default_even_for_gemini(wr, monkeypatch, fake_hass):
+    # opt-in switch (web_research_llm_fallback) defaults to False — a Gemini
+    # provider alone must not trigger the extra LLM call unless enabled
+    import importlib
+    jarvis_config = importlib.import_module("jc.jarvis_config")
+
+    async def fake_ddg(hass, q):
+        return {"query": q, "error": "no results"}
+
+    def fail_if_called(*a, **k):
+        raise AssertionError("grounded fallback must not run when the opt-in is off")
+
+    monkeypatch.setattr(wr, "_duckduckgo", fake_ddg)
+    monkeypatch.setattr(wr, "_gemini_grounded_search", fail_if_called)
+    monkeypatch.setattr(jarvis_config, "get",
+                         lambda key, default=None: {"llm_provider": "gemini"}.get(key, default))
+
+    out = await wr.research(fake_hass, "who is the current us president")
+    assert out["error"] == "no results"
 
 
 async def test_research_keeps_original_error_for_non_gemini_provider(wr, monkeypatch, fake_hass):
@@ -127,7 +149,8 @@ async def test_research_keeps_original_error_for_non_gemini_provider(wr, monkeyp
 
     monkeypatch.setattr(wr, "_duckduckgo", fake_ddg)
     monkeypatch.setattr(jarvis_config, "get",
-                         lambda key, default=None: {"llm_provider": "groq"}.get(key, default))
+                         lambda key, default=None: {"llm_provider": "groq",
+                                                     "web_research_llm_fallback": True}.get(key, default))
 
     out = await wr.research(fake_hass, "who is the current us president")
     assert out["error"] == "no results"
