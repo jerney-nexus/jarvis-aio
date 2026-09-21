@@ -2671,9 +2671,56 @@ def _is_tool_format_error(exc: Exception) -> bool:
         "tool_use_failed" in s
         or "tool call validation failed" in s
         or "failed to call a function" in s
-        or "thought_signature" in s   # Gemini "thinking" models over the OpenAI-compat endpoint reject tool calls lacking a native thought_signature (a field the OpenAI format can't supply) — salvage by answering without tools rather than going offline
+        # Gemini "thinking" models over the OpenAI-compat endpoint reject tool
+        # calls lacking a native thought signature (a field the OpenAI format
+        # can't supply) — salvage by answering without tools rather than going
+        # offline. Google's error text varies ("thought_signature" from some
+        # surfaces, "missing a thought signature" from raw Gemini API errors),
+        # so match both instead of the underscore form alone.
+        or "thought_signature" in s
+        or "thought signature" in s
         or ("400" in s and "invalid_request_error" in s and "function" in s)
     )
+
+
+def _flatten_tool_calls_for_replay(messages: list[dict]) -> list[dict]:
+    """Collapse assistant tool_calls + their tool-result replies into plain text.
+
+    Gemini "thinking" models (gemini-3.x, 2.5-flash/pro) attach an opaque
+    thought-signature to every function call, which the OpenAI-compat endpoint
+    never surfaces back to callers. Replaying an assistant tool_calls message
+    from history on a LATER turn — exactly what the tool-use loop below does —
+    gets rejected with HTTP 400 "Function call is missing a thought signature",
+    even when the new request doesn't declare tools itself. Reformatting a
+    reached function-call turn as ordinary assistant text (no structured
+    tool_calls field at all) sidesteps the requirement entirely, since Gemini
+    only enforces signatures on actual functionCall parts — the model still
+    sees exactly what was called and what it returned, just as prose.
+    Other providers are unaffected: this is only invoked for provider "gemini".
+    """
+    out = []
+    i = 0
+    while i < len(messages):
+        m = messages[i]
+        if m.get("role") == "assistant" and m.get("tool_calls"):
+            names = ", ".join(
+                tc.get("function", {}).get("name", "?") for tc in m["tool_calls"])
+            note = (m.get("content") or "").strip()
+            text = f"{note}\n" if note else ""
+            text += f"(called {names})"
+            j = i + 1
+            results = []
+            while j < len(messages) and messages[j].get("role") == "tool":
+                results.append(str(messages[j].get("content", "")))
+                j += 1
+            if results:
+                text += "\nResult: " + " | ".join(r for r in results if r)
+            out.append({"role": "assistant", "content": text})
+            i = j
+            continue
+        out.append(m)
+        i += 1
+    return out
 
 
 def _is_model_not_found(exc: Exception) -> bool:
@@ -3409,6 +3456,11 @@ async def run_agent(
                 "tool_call_id": call.get("id", ""),
                 "content": result_str,
             })
+
+        if provider_name == "gemini":
+            # Flatten before the NEXT loop iteration replays this turn back to
+            # Gemini — see _flatten_tool_calls_for_replay for why.
+            working = _flatten_tool_calls_for_replay(working)
 
     # Max iterations — ask for summary
     working.append({
