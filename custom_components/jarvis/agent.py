@@ -2684,7 +2684,8 @@ def _is_tool_format_error(exc: Exception) -> bool:
 
 
 def _flatten_tool_calls_for_replay(messages: list[dict]) -> list[dict]:
-    """Collapse assistant tool_calls + their tool-result replies into plain text.
+    """Collapse assistant tool_calls + their tool-result replies into a single
+    plain-text turn Gemini will actually respond to.
 
     Gemini "thinking" models (gemini-3.x, 2.5-flash/pro) attach an opaque
     thought-signature to every function call, which the OpenAI-compat endpoint
@@ -2692,10 +2693,16 @@ def _flatten_tool_calls_for_replay(messages: list[dict]) -> list[dict]:
     from history on a LATER turn — exactly what the tool-use loop below does —
     gets rejected with HTTP 400 "Function call is missing a thought signature",
     even when the new request doesn't declare tools itself. Reformatting a
-    reached function-call turn as ordinary assistant text (no structured
-    tool_calls field at all) sidesteps the requirement entirely, since Gemini
-    only enforces signatures on actual functionCall parts — the model still
-    sees exactly what was called and what it returned, just as prose.
+    reached function-call turn as ordinary text (no structured tool_calls
+    field at all) sidesteps the requirement entirely, since Gemini only
+    enforces signatures on actual functionCall parts.
+
+    The merged turn is emitted as role "user", not "assistant" — a tool result
+    is naturally the NEXT thing for the model to react to (that's what the
+    OpenAI "tool" role and Gemini's function-response role both represent).
+    Ending the replayed history on an "assistant"/"model" turn instead left
+    Gemini with nothing to respond to: it returned an empty completion every
+    time, since as far as it's concerned the model had already spoken last.
     Other providers are unaffected: this is only invoked for provider "gemini".
     """
     out = []
@@ -2715,7 +2722,7 @@ def _flatten_tool_calls_for_replay(messages: list[dict]) -> list[dict]:
                 j += 1
             if results:
                 text += "\nResult: " + " | ".join(r for r in results if r)
-            out.append({"role": "assistant", "content": text})
+            out.append({"role": "user", "content": f"[tool result] {text}"})
             i = j
             continue
         out.append(m)

@@ -84,7 +84,10 @@ def test_flatten_tool_calls_for_replay_collapses_to_plain_text(agent):
     assert all("tool_calls" not in m for m in out)
     assert all(m.get("role") != "tool" for m in out)
     flattened = out[2]
-    assert flattened["role"] == "assistant"
+    # emitted as "user" (a tool result reads as new input for the model) not
+    # "assistant" — ending on an assistant/model turn leaves Gemini with
+    # nothing to respond to and it returns an empty completion.
+    assert flattened["role"] == "user"
     assert "web_research" in flattened["content"]
     assert "no results" in flattened["content"]
     # surrounding messages are untouched
@@ -98,6 +101,22 @@ def test_flatten_tool_calls_for_replay_leaves_plain_history_alone(agent):
         {"role": "assistant", "content": "hello"},
     ]
     assert agent._flatten_tool_calls_for_replay(messages) == messages
+
+
+def test_flatten_tool_calls_for_replay_ends_on_user_turn_when_last(agent):
+    # the exact shape that produced an empty Gemini completion: a tool call
+    # as the FINAL exchange, with nothing after it in history yet
+    messages = [
+        {"role": "system", "content": "sys"},
+        {"role": "user", "content": "search the web for X"},
+        {"role": "assistant", "content": "", "tool_calls": [
+            {"id": "call_1", "type": "function",
+             "function": {"name": "web_research", "arguments": "{}"}},
+        ]},
+        {"role": "tool", "tool_call_id": "call_1", "content": '{"error": "no results"}'},
+    ]
+    out = agent._flatten_tool_calls_for_replay(messages)
+    assert out[-1]["role"] == "user"
 
 
 def test_slim_tools_are_a_small_valid_subset(agent):
