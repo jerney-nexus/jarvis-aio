@@ -1,3 +1,11 @@
+## [7.98.1] — release notes for the community floor-plan & 3D-view fixes
+
+Two contributions from **@PhoenixB** (#49, #50) landed just ahead of 7.98.0 and were swept into that tag without their own notes — this release documents them. No new code beyond what already merged; verified integrated (importer suite 27/27, audit clean, frontend syntax OK).
+
+**Floor-plan importer: exact room polygons, a `type` tag, and a `--mirror` flag (#49).** `scripts/sweethome3d_to_floorplan.py` now emits every room with a `type` tag and, for any room that isn't a plain axis-aligned rectangle, its exact SweetHome3D polygon as `points` — while still emitting the `x`/`y`/`w`/`h` bounding box `residence_graph.py` needs for adjacency. Plain rectangles stay as `{name, x, y, w, h, type}` with no `points`, keeping the config identical to the frontend's normal room objects (which already render `points` and `type` where present). Rooms with missing point coordinates in the XML no longer crash the parse. A rectangle detector with a small tolerance absorbs SweetHome3D's point-snapping rounding noise so genuine rectangles aren't emitted as redundant polygons. And a new **`--mirror x|y`** flag reflects a plan that imports as a true mirror image of the house — something `--rotate` can never fix, since rotation preserves chirality; `points` polygons are carried correctly through rotate, mirror and re-origin.
+
+**3D view: corrected rotation and projection (#50).** The Residence tab's 3D model had inverted signs in its rotation matrix and projection, so the model turned the wrong way and read mirrored under drag. The rotation matrix, the projected X axis, and both drag handlers (editor preview and house view) are now sign-consistent, so dragging turns the model the way you'd expect.
+
 ## [7.98.0] — camera learning gets *sharper* and JARVIS gains a memory of what it's noticed
 
 Three things, all building on 7.97.0's "learn from what the cameras see."
