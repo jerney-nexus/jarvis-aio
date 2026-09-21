@@ -2932,10 +2932,16 @@ def _scoped_tool_list(allowed_tools: Optional[set]) -> list:
 # exceed a size-limited request even after the HA per-entity tools are dropped.
 # This keeps only the essentials to answer and do basic control; JARVIS can find
 # anything else via search_entities.
+# Also keeps the small "outside world" tools (web_research, calendar_agenda,
+# weather_forecast) the system prompt explicitly tells the model to use for
+# those questions — omitting them here left the prompt instructing the model
+# to call a tool that then wasn't declared, and Groq rejects that outright
+# ("attempted to call tool 'web_research' which was not in request.tools"),
+# so a 413 retry for a web-search request could never actually succeed.
 _SLIM_TOOLS = {
     "control_device", "get_entity_state", "search_entities",
     "run_scene_or_script", "get_area_devices", "bulk_control",
-    "get_home_summary",
+    "get_home_summary", "web_research", "calendar_agenda", "weather_forecast",
 }
 
 

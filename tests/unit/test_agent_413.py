@@ -123,6 +123,10 @@ def test_slim_tools_are_a_small_valid_subset(agent):
     import json
     names = {t["function"]["name"] for t in agent.JARVIS_TOOLS}
     assert agent._SLIM_TOOLS <= names                      # all exist
+    # a 413 retry that drops the "outside world" tools while the system
+    # prompt still tells the model to use them produces a call to an
+    # undeclared tool, which Groq rejects outright — these must survive.
+    assert {"web_research", "calendar_agenda", "weather_forecast"} <= agent._SLIM_TOOLS
     full = agent._scoped_tool_list(None)
     slim = agent._scoped_tool_list(agent._SLIM_TOOLS)
     assert len(slim) == len(agent._SLIM_TOOLS)
