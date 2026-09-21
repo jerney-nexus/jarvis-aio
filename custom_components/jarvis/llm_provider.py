@@ -457,6 +457,50 @@ class AnthropicProvider(LLMProvider):
         return out
 
 
+# ─── Gemini web-grounding (one-shot, tool-free) ──────────────────────────────
+
+GEMINI_OPENAI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
+
+
+def gemini_grounded_search(api_key: str, model: str, query: str) -> Optional[str]:
+    """Ask Gemini to answer a query using its own live Google Search grounding.
+
+    A fallback for web_research: DuckDuckGo's Instant Answer API is a knowledge
+    graph, not a real search index, so it has nothing for fast-moving or very
+    recent queries ("current president", "latest score"). When the configured
+    provider is Gemini, this hands the question straight to Google's grounded
+    search instead of giving up. Deliberately a bare one-shot call (no JARVIS
+    tool declarations, no conversation history) — grounding is enabled via
+    extra_body per Google's documented OpenAI-compat pattern, and mixing it
+    with our own function-calling tools in the same request is unsupported.
+    Returns the answer text, or None on any failure — never raises, since this
+    is a best-effort fallback and the caller has an existing error to fall
+    back to.
+    """
+    if not api_key or not model:
+        return None
+    try:
+        from openai import OpenAI
+    except Exception:
+        return None
+    try:
+        client = OpenAI(api_key=api_key, base_url=GEMINI_OPENAI_BASE_URL)
+        resp = client.chat.completions.create(
+            model=model,
+            messages=[{
+                "role": "user",
+                "content": f"Search the web and answer concisely: {query}",
+            }],
+            max_tokens=512,
+            extra_body={"extra_body": {"google": {"search": {}}}},
+        )
+        text = (resp.choices[0].message.content or "").strip()
+        return text or None
+    except Exception as exc:
+        _LOGGER.debug("gemini_grounded_search(%r) failed: %s", query, exc)
+        return None
+
+
 # ─── Registry ────────────────────────────────────────────────────────────────
 
 PROVIDERS = {

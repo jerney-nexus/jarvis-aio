@@ -86,6 +86,54 @@ async def test_research_empty_query(wr):
     assert out["error"] == "empty query"
 
 
+async def test_research_falls_back_to_gemini_grounding_when_ddg_empty(wr, monkeypatch, fake_hass):
+    # trigger + grab the real (lazily-imported) sibling modules
+    import importlib
+    jarvis_config = importlib.import_module("jc.jarvis_config")
+    ha_secrets = importlib.import_module("jc.ha_secrets")
+    llm_provider = importlib.import_module("jc.llm_provider")
+
+    async def fake_ddg(hass, q):
+        return {"query": q, "error": "no results — try rephrasing, or this "
+                                     "may need a full web search"}
+
+    async def fake_get_key(hass, provider):
+        assert provider == "gemini"
+        return "fake-key"
+
+    def fake_grounded(api_key, model, query):
+        assert api_key == "fake-key"
+        assert "president" in query.lower()
+        return "Donald Trump is the current U.S. president."
+
+    monkeypatch.setattr(wr, "_duckduckgo", fake_ddg)
+    monkeypatch.setattr(jarvis_config, "get",
+                         lambda key, default=None: {"llm_provider": "gemini",
+                                                     "model": "gemini-2.5-flash"}.get(key, default))
+    monkeypatch.setattr(ha_secrets, "async_get_provider_key", fake_get_key)
+    monkeypatch.setattr(llm_provider, "gemini_grounded_search", fake_grounded)
+
+    out = await wr.research(fake_hass, "who is the current us president")
+    assert "error" not in out
+    assert "Trump" in out["answer"]
+    assert out["backend"] == "gemini_grounding"
+
+
+async def test_research_keeps_original_error_for_non_gemini_provider(wr, monkeypatch, fake_hass):
+    import importlib
+    jarvis_config = importlib.import_module("jc.jarvis_config")
+
+    async def fake_ddg(hass, q):
+        return {"query": q, "error": "no results"}
+
+    monkeypatch.setattr(wr, "_duckduckgo", fake_ddg)
+    monkeypatch.setattr(jarvis_config, "get",
+                         lambda key, default=None: {"llm_provider": "groq"}.get(key, default))
+
+    out = await wr.research(fake_hass, "who is the current us president")
+    assert out["error"] == "no results"
+
+
 def test_new_agent_tools_registered(load):
     agent = load("agent")
     names = {t["function"]["name"] for t in agent.JARVIS_TOOLS}

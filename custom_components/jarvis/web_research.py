@@ -62,11 +62,59 @@ async def research(hass, query: str) -> dict:
     backend = str(_cfg("search_backend", "duckduckgo")).lower()
     try:
         if backend == "searxng":
-            return await _searxng(hass, q)
-        return await _duckduckgo(hass, q)
+            result = await _searxng(hass, q)
+        else:
+            result = await _duckduckgo(hass, q)
     except Exception as exc:
         _LOGGER.debug("web_research(%r) failed: %s", q, exc)
-        return {"query": q, "error": f"lookup failed: {exc}"}
+        result = {"query": q, "error": f"lookup failed: {exc}"}
+
+    if result.get("error"):
+        grounded = await _llm_grounded_fallback(hass, q)
+        if grounded:
+            return grounded
+    return result
+
+
+async def _llm_grounded_fallback(hass, q: str) -> Optional[dict]:
+    """Fall back to the configured LLM's own live web-grounding when the
+    primary backend (DDG/SearXNG) comes back empty — common for fast-moving
+    or very recent facts DDG's Instant Answer API was never built to answer.
+    Only Gemini has a grounding path today; any other provider (or a missing
+    key) simply leaves the original error in place. Never raises."""
+    try:
+        from . import jarvis_config, ha_secrets
+
+        provider = str(jarvis_config.get("llm_provider", "groq") or "").lower()
+        model = str(jarvis_config.get("model", "") or "")
+        if provider != "gemini":
+            # The Main Agent may run a cheaper provider while the reasoning
+            # tier (often used alongside web_research) runs Gemini — try that.
+            provider = str(jarvis_config.get("reasoning_provider", "") or "").lower()
+            model = str(jarvis_config.get("reasoning_model", "") or "")
+        if provider != "gemini":
+            return None
+
+        api_key = await ha_secrets.async_get_provider_key(hass, "gemini")
+        if not api_key:
+            return None
+
+        from .llm_provider import gemini_grounded_search
+        text = await hass.async_add_executor_job(
+            gemini_grounded_search, api_key, model or "gemini-2.5-flash", q)
+        if not text:
+            return None
+        return {
+            "query": q,
+            "answer": _clip(text, _MAX_ABSTRACT),
+            "source": "",
+            "source_name": "Gemini web grounding",
+            "related": [],
+            "backend": "gemini_grounding",
+        }
+    except Exception as exc:
+        _LOGGER.debug("llm grounded fallback for %r failed: %s", q, exc)
+        return None
 
 
 async def _duckduckgo(hass, q: str) -> dict:
