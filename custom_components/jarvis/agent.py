@@ -2684,26 +2684,25 @@ def _is_tool_format_error(exc: Exception) -> bool:
 
 
 def _flatten_tool_calls_for_replay(messages: list[dict]) -> list[dict]:
-    """Collapse assistant tool_calls + their tool-result replies into a single
-    plain-text turn Gemini will actually respond to.
+    """Collapse assistant tool_calls + their tool-result replies into the
+    preceding user turn, preserving valid user/model alternation for Gemini.
 
     Gemini "thinking" models (gemini-3.x, 2.5-flash/pro) attach an opaque
     thought-signature to every function call, which the OpenAI-compat endpoint
     never surfaces back to callers. Replaying an assistant tool_calls message
-    from history on a LATER turn — exactly what the tool-use loop below does —
+    from history on a later turn — exactly what the tool-use loop below does —
     gets rejected with HTTP 400 "Function call is missing a thought signature",
-    even when the new request doesn't declare tools itself. Reformatting a
-    reached function-call turn as ordinary text (no structured tool_calls
-    field at all) sidesteps the requirement entirely, since Gemini only
-    enforces signatures on actual functionCall parts.
+    even when the new request does not declare tools itself. Reformatting the
+    function-call turn as plain text prevents Gemini from reprocessing the
+    structured tool call while still keeping the call/result context in the
+    same logical user turn.
 
-    The merged turn is emitted as role "user", not "assistant" — a tool result
-    is naturally the NEXT thing for the model to react to (that's what the
-    OpenAI "tool" role and Gemini's function-response role both represent).
-    Ending the replayed history on an "assistant"/"model" turn instead left
-    Gemini with nothing to respond to: it returned an empty completion every
-    time, since as far as it's concerned the model had already spoken last.
-    Other providers are unaffected: this is only invoked for provider "gemini".
+    The critical issue is role alternation: adding a second consecutive "user"
+    turn behind the original question breaks Gemini's strict turn pattern and can
+    produce the empty/confused completion seen in real-world weather prompts.
+    Coalescing into the previous user message keeps the turn sequence valid while
+    preserving the tool result in the message body. Other providers are
+    unaffected: this function is only invoked for provider "gemini".
     """
     out = []
     i = 0
@@ -2722,7 +2721,11 @@ def _flatten_tool_calls_for_replay(messages: list[dict]) -> list[dict]:
                 j += 1
             if results:
                 text += "\nResult: " + " | ".join(r for r in results if r)
-            out.append({"role": "user", "content": f"[tool result] {text}"})
+            merged = f"[tool result] {text}"
+            if out and out[-1].get("role") == "user":
+                out[-1]["content"] = f'{out[-1].get("content", "")}\n{merged}'
+            else:
+                out.append({"role": "user", "content": merged})
             i = j
             continue
         out.append(m)

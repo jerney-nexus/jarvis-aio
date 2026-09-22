@@ -71,7 +71,7 @@ def test_gemini_thought_signature_space_variant_salvaged(agent):
 def test_flatten_tool_calls_for_replay_collapses_to_plain_text(agent):
     messages = [
         {"role": "system", "content": "sys"},
-        {"role": "user", "content": "who's president"},
+        {"role": "user", "content": "check the current home status"},
         {"role": "assistant", "content": "", "tool_calls": [
             {"id": "call_1", "type": "function",
              "function": {"name": "web_research", "arguments": "{}"}},
@@ -83,15 +83,14 @@ def test_flatten_tool_calls_for_replay_collapses_to_plain_text(agent):
     # no structured tool_calls / tool-role messages survive
     assert all("tool_calls" not in m for m in out)
     assert all(m.get("role") != "tool" for m in out)
-    flattened = out[2]
-    # emitted as "user" (a tool result reads as new input for the model) not
-    # "assistant" — ending on an assistant/model turn leaves Gemini with
-    # nothing to respond to and it returns an empty completion.
-    assert flattened["role"] == "user"
-    assert "web_research" in flattened["content"]
-    assert "no results" in flattened["content"]
-    # surrounding messages are untouched
-    assert out[0] == messages[0] and out[1] == messages[1] and out[-1] == messages[-1]
+    # merge the result into the immediately preceding user turn so we keep
+    # valid user/model alternation instead of creating a second consecutive user
+    # turn behind the original question.
+    assert out[1]["role"] == "user"
+    assert "check the current home status" in out[1]["content"]
+    assert "web_research" in out[1]["content"]
+    assert "no results" in out[1]["content"]
+    assert out[-1] == messages[-1]
 
 
 def test_flatten_tool_calls_for_replay_leaves_plain_history_alone(agent):
