@@ -230,7 +230,7 @@ def test_manual_set_mode_cannot_interleave_with_auto_decision(modes, monkeypatch
     real_persist = modes._persist
     gate_used = threading.Event()
 
-    def gated_persist():
+    def gated_persist(snapshot):
         # Pauses mid-write, with the state lock still held by the auto thread,
         # so the test can try to squeeze a manual set_mode() into the gap. Only
         # the first call (the auto path) is gated; the manual path's own
@@ -239,10 +239,10 @@ def test_manual_set_mode_cannot_interleave_with_auto_decision(modes, monkeypatch
             gate_used.set()
             entered_persist.set()
             release_persist.wait(timeout=2)
-            order.append(("auto_persist", modes._state["mode"]))
+            order.append(("auto_persist", snapshot["mode"]))
         else:
-            order.append(("manual_persist", modes._state["mode"]))
-        real_persist()
+            order.append(("manual_persist", snapshot["mode"]))
+        real_persist(snapshot)
 
     monkeypatch.setattr(modes, "_persist", gated_persist)
 
@@ -273,7 +273,11 @@ def test_manual_set_mode_cannot_interleave_with_auto_decision(modes, monkeypatch
     assert modes.active_mode() == "party"
 
 
-def test_mode_info_waits_for_writer_snapshot(modes, monkeypatch):
+def test_reads_dont_block_on_writer_persist(modes, monkeypatch):
+    """Event-loop reads (active_mode/mode_info/mode_overrides) must stay
+    lock-free: a writer stalled mid-_persist() (holding _state_lock across the
+    file I/O) must never make a synchronous reader wait, since that reader may
+    be running on the HA event loop."""
     import threading
 
     entered_persist = threading.Event()
@@ -281,7 +285,7 @@ def test_mode_info_waits_for_writer_snapshot(modes, monkeypatch):
     reader_done = threading.Event()
     result = {}
 
-    def gated_persist():
+    def gated_persist(snapshot):
         entered_persist.set()
         release_persist.wait(timeout=2)
 
@@ -297,11 +301,12 @@ def test_mode_info_waits_for_writer_snapshot(modes, monkeypatch):
 
     reader = threading.Thread(target=_read_info)
     reader.start()
-    assert not reader_done.wait(timeout=0.3)
+    # The reader must complete immediately even though the writer is still
+    # blocked in _persist() holding _state_lock.
+    assert reader_done.wait(timeout=1)
 
     release_persist.set()
     writer.join(timeout=2)
-    reader.join(timeout=2)
 
     assert result["active"] == "party"
     assert result["reason"] == "manual"
