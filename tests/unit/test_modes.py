@@ -254,6 +254,14 @@ def test_manual_set_mode_cannot_interleave_with_auto_decision(modes, monkeypatch
     assert entered_gate.wait(timeout=2)  # auto thread paused just before set_mode()
 
     manual_done = threading.Event()
+    manual_attempted = threading.Event()
+    gated_call = modes.set_mode
+
+    def _tracked_set_mode(name, reason=""):
+        manual_attempted.set()
+        return gated_call(name, reason)
+
+    monkeypatch.setattr(modes, "set_mode", _tracked_set_mode)
 
     def _manual():
         modes.set_mode("party", "manual")
@@ -261,6 +269,7 @@ def test_manual_set_mode_cannot_interleave_with_auto_decision(modes, monkeypatch
 
     t_manual = threading.Thread(target=_manual)
     t_manual.start()
+    assert manual_attempted.wait(timeout=2)
 
     # With the lock held across the whole read-decide-write, the manual call
     # must still be blocked here — this is what would fail without the fix.
