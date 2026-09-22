@@ -213,3 +213,62 @@ def test_concurrent_set_mode_and_auto_evaluate_dont_corrupt_state(modes):
     with open(modes.MODE_STATE_PATH) as f:
         data = json.load(f)
     assert data["mode"] in modes._all_modes()
+
+
+def test_manual_set_mode_cannot_interleave_with_auto_decision(modes, monkeypatch):
+    """Deterministic race: a manual set_mode() must not be able to land between
+    auto_evaluate()'s read-decide step and the set_mode() call that acts on it
+    — otherwise it gets silently clobbered by a now-stale auto decision."""
+    import threading
+
+    modes.set_mode("away", "seed")  # occupied=True below will decide away → normal
+
+    entered_persist = threading.Event()
+    release_persist = threading.Event()
+    order = []
+
+    real_persist = modes._persist
+    gate_used = threading.Event()
+
+    def gated_persist():
+        # Pauses mid-write, with the state lock still held by the auto thread,
+        # so the test can try to squeeze a manual set_mode() into the gap. Only
+        # the first call (the auto path) is gated; the manual path's own
+        # persist should run through untouched.
+        if not gate_used.is_set():
+            gate_used.set()
+            entered_persist.set()
+            release_persist.wait(timeout=2)
+            order.append(("auto_persist", modes._state["mode"]))
+        else:
+            order.append(("manual_persist", modes._state["mode"]))
+        real_persist()
+
+    monkeypatch.setattr(modes, "_persist", gated_persist)
+
+    t_auto = threading.Thread(target=lambda: modes.auto_evaluate(occupied=True))
+    t_auto.start()
+    assert entered_persist.wait(timeout=2)  # auto thread is now mid-write, lock held
+
+    manual_done = threading.Event()
+
+    def _manual():
+        modes.set_mode("party", "manual")
+        order.append(("manual_set", modes._state["mode"]))
+        manual_done.set()
+
+    t_manual = threading.Thread(target=_manual)
+    t_manual.start()
+
+    # With the lock held through the whole auto write, the manual call must
+    # still be blocked here — this is what would fail without the fix.
+    assert not manual_done.wait(timeout=0.3)
+
+    release_persist.set()
+    t_auto.join(timeout=2)
+    t_manual.join(timeout=2)
+
+    assert order == [("auto_persist", "normal"), ("manual_persist", "party"),
+                      ("manual_set", "party")]
+    assert modes.active_mode() == "party"
+

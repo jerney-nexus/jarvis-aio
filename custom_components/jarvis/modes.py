@@ -33,9 +33,12 @@ from typing import Optional
 _LOGGER = logging.getLogger(__name__)
 
 # set_mode()/auto_evaluate() run on executor threads from several callers
-# (agent.py, websocket.py, the cognitive tick); this serializes state mutation
-# and the atomic tmp-file write so concurrent callers can't interleave.
-_state_lock = threading.Lock()
+# (agent.py, websocket.py, the cognitive tick). Reentrant so auto_evaluate()
+# can hold the lock across its read-decide-write instead of releasing it
+# between the decision and the set_mode() call that acts on it — otherwise a
+# manual set_mode() could land in that gap and get clobbered by a stale auto
+# decision.
+_state_lock = threading.RLock()
 
 MODE_STATE_PATH = "/config/jarvis/mode_state.json"
 DEFAULT_MODE = "normal"
@@ -269,13 +272,10 @@ def auto_evaluate(occupied: bool) -> Optional[dict]:
         with _state_lock:
             _load()
             cur = _state.get("mode", DEFAULT_MODE)
-            switch_to = None
             if not occupied and cur != "away":
-                switch_to = ("away", "auto: home empty")
-            elif occupied and cur == "away":
-                switch_to = (DEFAULT_MODE, "auto: someone home")
-        if switch_to:
-            return set_mode(*switch_to)
+                return set_mode("away", "auto: home empty")
+            if occupied and cur == "away":
+                return set_mode(DEFAULT_MODE, "auto: someone home")
     except Exception as exc:
         _LOGGER.debug("auto_evaluate failed: %s", exc)
     return None
