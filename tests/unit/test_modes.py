@@ -223,53 +223,54 @@ def test_manual_set_mode_cannot_interleave_with_auto_decision(modes, monkeypatch
 
     modes.set_mode("away", "seed")  # occupied=True below will decide away → normal
 
-    entered_persist = threading.Event()
-    release_persist = threading.Event()
+    entered_gate = threading.Event()
+    release_gate = threading.Event()
     order = []
 
-    real_persist = modes._persist
+    real_set_mode = modes.set_mode
     gate_used = threading.Event()
 
-    def gated_persist(snapshot):
-        # Pauses mid-write, with the state lock still held by the auto thread,
-        # so the test can try to squeeze a manual set_mode() into the gap. Only
-        # the first call (the auto path) is gated; the manual path's own
-        # persist should run through untouched.
-        if not gate_used.is_set():
+    def gated_set_mode(name, reason=""):
+        # Pauses the auto thread right before it enters the real set_mode(),
+        # i.e. in the read-decide-write gap the outer lock in auto_evaluate()
+        # must cover. If that outer lock were dropped, the manual call below
+        # would be free to run to completion here and get clobbered once this
+        # thread resumes and applies its now-stale decision. order is recorded
+        # after the real call returns, so it reflects completion order (not
+        # invocation order), which is what actually matters for the race.
+        is_auto_call = not gate_used.is_set()
+        if is_auto_call:
             gate_used.set()
-            entered_persist.set()
-            release_persist.wait(timeout=2)
-            order.append(("auto_persist", snapshot["mode"]))
-        else:
-            order.append(("manual_persist", snapshot["mode"]))
-        real_persist(snapshot)
+            entered_gate.set()
+            release_gate.wait(timeout=2)
+        result = real_set_mode(name, reason)
+        order.append(("auto_set" if is_auto_call else "manual_set", result["mode"]))
+        return result
 
-    monkeypatch.setattr(modes, "_persist", gated_persist)
+    monkeypatch.setattr(modes, "set_mode", gated_set_mode)
 
     t_auto = threading.Thread(target=lambda: modes.auto_evaluate(occupied=True))
     t_auto.start()
-    assert entered_persist.wait(timeout=2)  # auto thread is now mid-write, lock held
+    assert entered_gate.wait(timeout=2)  # auto thread paused just before set_mode()
 
     manual_done = threading.Event()
 
     def _manual():
         modes.set_mode("party", "manual")
-        order.append(("manual_set", modes._state["mode"]))
         manual_done.set()
 
     t_manual = threading.Thread(target=_manual)
     t_manual.start()
 
-    # With the lock held through the whole auto write, the manual call must
-    # still be blocked here — this is what would fail without the fix.
+    # With the lock held across the whole read-decide-write, the manual call
+    # must still be blocked here — this is what would fail without the fix.
     assert not manual_done.wait(timeout=0.3)
 
-    release_persist.set()
+    release_gate.set()
     t_auto.join(timeout=2)
     t_manual.join(timeout=2)
 
-    assert order == [("auto_persist", "normal"), ("manual_persist", "party"),
-                      ("manual_set", "party")]
+    assert order == [("auto_set", "normal"), ("manual_set", "party")]
     assert modes.active_mode() == "party"
 
 

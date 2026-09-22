@@ -253,8 +253,8 @@ def set_mode(name: str, reason: str = "") -> dict:
         return {"ok": False, "error": f"unknown mode '{name}'",
                 "available": sorted(modes.keys())}
     global _state
-    new_state = {"mode": key, "since": time.time(), "reason": str(reason or "")}
     with _state_lock:
+        new_state = {"mode": key, "since": time.time(), "reason": str(reason or "")}
         _state = new_state  # atomic swap: concurrent readers see old or new, never partial
         _persist(new_state)
     _LOGGER.info("JARVIS mode → %s%s", key, f" ({reason})" if reason else "")
