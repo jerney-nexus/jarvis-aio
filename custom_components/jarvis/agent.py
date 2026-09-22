@@ -2671,9 +2671,68 @@ def _is_tool_format_error(exc: Exception) -> bool:
         "tool_use_failed" in s
         or "tool call validation failed" in s
         or "failed to call a function" in s
-        or "thought_signature" in s   # Gemini "thinking" models over the OpenAI-compat endpoint reject tool calls lacking a native thought_signature (a field the OpenAI format can't supply) — salvage by answering without tools rather than going offline
+        # Gemini "thinking" models over the OpenAI-compat endpoint reject tool
+        # calls lacking a native thought signature (a field the OpenAI format
+        # can't supply) — salvage by answering without tools rather than going
+        # offline. Google's error text varies ("thought_signature" from some
+        # surfaces, "missing a thought signature" from raw Gemini API errors),
+        # so match both instead of the underscore form alone.
+        or "thought_signature" in s
+        or "thought signature" in s
         or ("400" in s and "invalid_request_error" in s and "function" in s)
     )
+
+
+def _flatten_tool_calls_for_replay(messages: list[dict]) -> list[dict]:
+    """Collapse assistant tool_calls + their tool-result replies into the
+    preceding user turn, preserving valid user/model alternation for Gemini.
+
+    Gemini "thinking" models (gemini-3.x, 2.5-flash/pro) attach an opaque
+    thought-signature to every function call, which the OpenAI-compat endpoint
+    never surfaces back to callers. Replaying an assistant tool_calls message
+    from history on a later turn — exactly what the tool-use loop below does —
+    gets rejected with HTTP 400 "Function call is missing a thought signature",
+    even when the new request does not declare tools itself. Reformatting the
+    function-call turn as plain text prevents Gemini from reprocessing the
+    structured tool call while still keeping the call/result context in the
+    same logical user turn.
+
+    The critical issue is role alternation: adding a second consecutive "user"
+    turn behind the original question breaks Gemini's strict turn pattern and can
+    produce the empty/confused completion seen in real-world weather prompts.
+    Coalescing into the previous user message keeps the turn sequence valid while
+    preserving the tool result in the message body. Other providers are
+    unaffected: this function is only invoked for provider "gemini".
+    """
+    out = []
+    i = 0
+    while i < len(messages):
+        m = messages[i]
+        if m.get("role") == "assistant" and m.get("tool_calls"):
+            names = ", ".join(
+                tc.get("function", {}).get("name", "?") for tc in m["tool_calls"])
+            note = (m.get("content") or "").strip()
+            text = f"{note}\n" if note else ""
+            text += f"(called {names})"
+            j = i + 1
+            results = []
+            while j < len(messages) and messages[j].get("role") == "tool":
+                results.append(str(messages[j].get("content", "")))
+                j += 1
+            if results:
+                text += "\nResult: " + " | ".join(r for r in results if r)
+            merged = f"[tool result] {text}"
+            if out and out[-1].get("role") == "user":
+                prev = dict(out[-1])
+                prev["content"] = f'{prev.get("content", "")}\n{merged}'
+                out[-1] = prev
+            else:
+                out.append({"role": "user", "content": merged})
+            i = j
+            continue
+        out.append(m)
+        i += 1
+    return out
 
 
 def _is_model_not_found(exc: Exception) -> bool:
@@ -2878,10 +2937,16 @@ def _scoped_tool_list(allowed_tools: Optional[set]) -> list:
 # exceed a size-limited request even after the HA per-entity tools are dropped.
 # This keeps only the essentials to answer and do basic control; JARVIS can find
 # anything else via search_entities.
+# Also keeps the small "outside world" tools (web_research, calendar_agenda,
+# weather_forecast) the system prompt explicitly tells the model to use for
+# those questions — omitting them here left the prompt instructing the model
+# to call a tool that then wasn't declared, and Groq rejects that outright
+# ("attempted to call tool 'web_research' which was not in request.tools"),
+# so a 413 retry for a web-search request could never actually succeed.
 _SLIM_TOOLS = {
     "control_device", "get_entity_state", "search_entities",
     "run_scene_or_script", "get_area_devices", "bulk_control",
-    "get_home_summary",
+    "get_home_summary", "web_research", "calendar_agenda", "weather_forecast",
 }
 
 
@@ -3409,6 +3474,11 @@ async def run_agent(
                 "tool_call_id": call.get("id", ""),
                 "content": result_str,
             })
+
+        if provider_name == "gemini":
+            # Flatten before the NEXT loop iteration replays this turn back to
+            # Gemini — see _flatten_tool_calls_for_replay for why.
+            working = _flatten_tool_calls_for_replay(working)
 
     # Max iterations — ask for summary
     working.append({

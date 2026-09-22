@@ -60,10 +60,72 @@ def test_gemini_thought_signature_salvaged_as_tool_error(agent):
     assert agent._is_connectivity_error(exc) is False
 
 
+def test_gemini_thought_signature_space_variant_salvaged(agent):
+    # raw Gemini API phrasing uses a space, not an underscore — must also match
+    exc = Exception("[original: beyond::dependency::INVALID_ARGUMENT] Function "
+                    "call is missing a thought signature. (qos=CRITICAL)")
+    assert agent._is_tool_format_error(exc) is True
+    assert agent._is_connectivity_error(exc) is False
+
+
+def test_flatten_tool_calls_for_replay_collapses_to_plain_text(agent):
+    messages = [
+        {"role": "system", "content": "sys"},
+        {"role": "user", "content": "check the current home status"},
+        {"role": "assistant", "content": "", "tool_calls": [
+            {"id": "call_1", "type": "function",
+             "function": {"name": "web_research", "arguments": "{}"}},
+        ]},
+        {"role": "tool", "tool_call_id": "call_1", "content": '{"error": "no results"}'},
+        {"role": "user", "content": "and now?"},
+    ]
+    out = agent._flatten_tool_calls_for_replay(messages)
+    # no structured tool_calls / tool-role messages survive
+    assert all("tool_calls" not in m for m in out)
+    assert all(m.get("role") != "tool" for m in out)
+    # merge the result into the immediately preceding user turn so we keep
+    # valid user/model alternation instead of creating a second consecutive user
+    # turn behind the original question.
+    assert out[1]["role"] == "user"
+    assert "check the current home status" in out[1]["content"]
+    assert "web_research" in out[1]["content"]
+    assert "no results" in out[1]["content"]
+    assert out[-1] == messages[-1]
+
+
+def test_flatten_tool_calls_for_replay_leaves_plain_history_alone(agent):
+    messages = [
+        {"role": "system", "content": "sys"},
+        {"role": "user", "content": "hi"},
+        {"role": "assistant", "content": "hello"},
+    ]
+    assert agent._flatten_tool_calls_for_replay(messages) == messages
+
+
+def test_flatten_tool_calls_for_replay_ends_on_user_turn_when_last(agent):
+    # the exact shape that produced an empty Gemini completion: a tool call
+    # as the FINAL exchange, with nothing after it in history yet
+    messages = [
+        {"role": "system", "content": "sys"},
+        {"role": "user", "content": "search the web for X"},
+        {"role": "assistant", "content": "", "tool_calls": [
+            {"id": "call_1", "type": "function",
+             "function": {"name": "web_research", "arguments": "{}"}},
+        ]},
+        {"role": "tool", "tool_call_id": "call_1", "content": '{"error": "no results"}'},
+    ]
+    out = agent._flatten_tool_calls_for_replay(messages)
+    assert out[-1]["role"] == "user"
+
+
 def test_slim_tools_are_a_small_valid_subset(agent):
     import json
     names = {t["function"]["name"] for t in agent.JARVIS_TOOLS}
     assert agent._SLIM_TOOLS <= names                      # all exist
+    # a 413 retry that drops the "outside world" tools while the system
+    # prompt still tells the model to use them produces a call to an
+    # undeclared tool, which Groq rejects outright — these must survive.
+    assert {"web_research", "calendar_agenda", "weather_forecast"} <= agent._SLIM_TOOLS
     full = agent._scoped_tool_list(None)
     slim = agent._scoped_tool_list(agent._SLIM_TOOLS)
     assert len(slim) == len(agent._SLIM_TOOLS)

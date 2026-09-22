@@ -818,6 +818,7 @@ async def ws_get_panel_data(
                 "banter_level":         _runtime_opt(hass, entry, "banter_level", 1),
                 "search_backend":       str(_runtime_opt(hass, entry, "search_backend", "duckduckgo") or "duckduckgo"),
                 "searxng_url":          str(_runtime_opt(hass, entry, "searxng_url", "") or ""),
+                "web_research_llm_fallback": bool(_runtime_opt(hass, entry, "web_research_llm_fallback", False)),
                 "calendar_tight_gap_min": _runtime_opt(hass, entry, "calendar_tight_gap_min", 15),
                 "recognition_source":   str(_runtime_opt(hass, entry, "recognition_source", "both") or "both"),
                 "voice_confirm_enabled": bool(_runtime_opt(hass, entry, "voice_confirm_enabled", False)),
@@ -1368,6 +1369,7 @@ PANEL_WRITABLE_KEYS = {
     # Web Research + Communication agents (v6.51.0)
     "search_backend",            # str: "duckduckgo" (default) | "searxng"
     "searxng_url",               # str: SearXNG base URL when backend=searxng
+    "web_research_llm_fallback", # bool: opt-in — escalate to the LLM's own web search on empty results
     "calendar_tight_gap_min",    # int: back-to-back gap flagged as "tight"
     # Persona (v6.51.0)
     "banter_level",              # int: 0 plain · 1 dry (default) · 2 full MCU wit

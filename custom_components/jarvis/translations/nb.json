@@ -151,7 +151,8 @@
           "directive_preset": "Direktiv-forhåndsinnstilling",
           "directive": "Egendefinert direktiv (valgfritt, overstyrer forhåndsinnstilling)",
           "llm_provider": "Conversation model provider",
-          "use_hass_api": "Aktiver hjemstyring (lys, klima, låser osv.)"
+          "use_hass_api": "Aktiver hjemstyring (lys, klima, låser osv.)",
+          "web_research_llm_fallback": "La websøk eskalere til LLM-ens egen websøk når standard-backend ikke finner noe"
         }
       },
       "core_model": {

@@ -86,6 +86,111 @@ async def test_research_empty_query(wr):
     assert out["error"] == "empty query"
 
 
+async def test_research_falls_back_to_gemini_grounding_when_ddg_empty(wr, monkeypatch, fake_hass):
+    # trigger + grab the real (lazily-imported) sibling modules
+    import importlib
+    jarvis_config = importlib.import_module("jc.jarvis_config")
+    ha_secrets = importlib.import_module("jc.ha_secrets")
+
+    async def fake_ddg(hass, q):
+        return {"query": q, "error": "no results — try rephrasing, or this "
+                                     "may need a full web search"}
+
+    async def fake_get_key(hass, provider):
+        assert provider == "gemini"
+        return "fake-key"
+
+    async def fake_grounded(hass, api_key, model, query):
+        assert api_key == "fake-key"
+        assert "president" in query.lower()
+        return "Example grounded answer from Gemini."
+
+    monkeypatch.setattr(wr, "_duckduckgo", fake_ddg)
+    monkeypatch.setattr(jarvis_config, "get",
+                         lambda key, default=None: {"llm_provider": "gemini",
+                                                     "model": "gemini-2.5-flash",
+                                                     "web_research_llm_fallback": True}.get(key, default))
+    monkeypatch.setattr(ha_secrets, "async_get_provider_key", fake_get_key)
+    monkeypatch.setattr(wr, "_gemini_grounded_search", fake_grounded)
+
+    out = await wr.research(fake_hass, "who is the current us president")
+    assert "error" not in out
+    assert "Example grounded answer" in out["answer"]
+    assert out["backend"] == "gemini_grounding"
+
+
+async def test_research_fallback_stays_off_by_default_even_for_gemini(wr, monkeypatch, fake_hass):
+    # opt-in switch (web_research_llm_fallback) defaults to False — a Gemini
+    # provider alone must not trigger the extra LLM call unless enabled
+    import importlib
+    jarvis_config = importlib.import_module("jc.jarvis_config")
+
+    async def fake_ddg(hass, q):
+        return {"query": q, "error": "no results"}
+
+    def fail_if_called(*a, **k):
+        raise AssertionError("grounded fallback must not run when the opt-in is off")
+
+    monkeypatch.setattr(wr, "_duckduckgo", fake_ddg)
+    monkeypatch.setattr(wr, "_gemini_grounded_search", fail_if_called)
+    monkeypatch.setattr(jarvis_config, "get",
+                         lambda key, default=None: {"llm_provider": "gemini"}.get(key, default))
+
+    out = await wr.research(fake_hass, "who is the current us president")
+    assert out["error"] == "no results"
+
+
+async def test_research_keeps_original_error_for_non_gemini_provider(wr, monkeypatch, fake_hass):
+    import importlib
+    jarvis_config = importlib.import_module("jc.jarvis_config")
+
+    async def fake_ddg(hass, q):
+        return {"query": q, "error": "no results"}
+
+    monkeypatch.setattr(wr, "_duckduckgo", fake_ddg)
+    monkeypatch.setattr(jarvis_config, "get",
+                         lambda key, default=None: {"llm_provider": "groq",
+                                                     "web_research_llm_fallback": True}.get(key, default))
+
+    out = await wr.research(fake_hass, "who is the current us president")
+    assert out["error"] == "no results"
+
+
+async def test_gemini_grounded_search_strips_models_prefix(wr, monkeypatch, fake_hass):
+    # Regression: a model id pasted with the "models/" prefix (as the Gemini
+    # model picker often stores it) must not double up with the endpoint
+    # template's own "models/{model}" segment.
+    import sys
+    captured = {}
+
+    class _FakeResp:
+        status = 200
+
+        async def json(self, content_type=None):
+            return {"candidates": [{"content": {"parts": [{"text": "answer"}]}}]}
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+    class _FakeSession:
+        def post(self, url, params=None, json=None, timeout=None):
+            captured["url"] = url
+            return _FakeResp()
+
+    aiohttp_client = sys.modules["homeassistant.helpers.aiohttp_client"]
+    monkeypatch.setattr(aiohttp_client, "async_get_clientsession", lambda hass: _FakeSession())
+
+    text = await wr._gemini_grounded_search(
+        fake_hass, "fake-key", "models/gemini-2.5-flash", "test query")
+
+    assert text == "answer"
+    assert captured["url"] == wr._GEMINI_GENERATE_ENDPOINT.format(model="gemini-2.5-flash")
+    assert "models/models" not in captured["url"]
+
+
 def test_new_agent_tools_registered(load):
     agent = load("agent")
     names = {t["function"]["name"] for t in agent.JARVIS_TOOLS}

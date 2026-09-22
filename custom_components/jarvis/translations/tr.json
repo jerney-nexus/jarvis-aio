@@ -151,7 +151,8 @@
           "directive_preset": "Direktif ön ayarı",
           "directive": "Özel direktif (isteğe bağlı, ön ayarı geçersiz kılar)",
           "llm_provider": "Conversation model provider",
-          "use_hass_api": "Ev kontrolünü etkinleştir (ışıklar, iklim, kilitler vb.)"
+          "use_hass_api": "Ev kontrolünü etkinleştir (ışıklar, iklim, kilitler vb.)",
+          "web_research_llm_fallback": "Varsayılan arka uç hiçbir şey bulamadığında web araştırmasının LLM'in kendi web aramasına yükseltilmesine izin ver"
         }
       },
       "core_model": {

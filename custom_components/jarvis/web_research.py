@@ -62,11 +62,120 @@ async def research(hass, query: str) -> dict:
     backend = str(_cfg("search_backend", "duckduckgo")).lower()
     try:
         if backend == "searxng":
-            return await _searxng(hass, q)
-        return await _duckduckgo(hass, q)
+            result = await _searxng(hass, q)
+        else:
+            result = await _duckduckgo(hass, q)
     except Exception as exc:
         _LOGGER.debug("web_research(%r) failed: %s", q, exc)
-        return {"query": q, "error": f"lookup failed: {exc}"}
+        result = {"query": q, "error": f"lookup failed: {exc}"}
+
+    err = str(result.get("error") or "")
+    if err and err.lower().startswith("no results"):
+        grounded = await _llm_grounded_fallback(hass, q)
+        if grounded:
+            return grounded
+    return result
+
+
+async def _llm_grounded_fallback(hass, q: str) -> Optional[dict]:
+    """Fall back to the configured LLM's own live web-grounding when the
+    primary backend (DDG/SearXNG) comes back empty — common for fast-moving
+    or very recent facts DDG's Instant Answer API was never built to answer.
+    Opt-in (config: web_research_llm_fallback, off by default) — it's an
+    extra LLM call the user hasn't explicitly asked for. Only Gemini has a
+    grounding path today; any other provider (or a missing key) simply
+    leaves the original error in place. Never raises."""
+    try:
+        from . import jarvis_config, ha_secrets
+
+        if not _cfg("web_research_llm_fallback", False):
+            return None
+
+        provider = str(jarvis_config.get("llm_provider", "groq") or "").lower()
+        model = str(jarvis_config.get("model", "") or "")
+        if provider != "gemini":
+            # The Main Agent may run a cheaper provider while the reasoning
+            # tier (often used alongside web_research) runs Gemini — try that.
+            provider = str(jarvis_config.get("reasoning_provider", "") or "").lower()
+            model = str(jarvis_config.get("reasoning_model", "") or "")
+        if provider != "gemini":
+            return None
+
+        api_key = await ha_secrets.async_get_provider_key(hass, "gemini")
+        if not api_key:
+            return None
+
+        text = await _gemini_grounded_search(hass, api_key, model or "gemini-2.5-flash", q)
+        if not text:
+            return None
+        return {
+            "query": q,
+            "answer": _clip(text, _MAX_ABSTRACT),
+            "source": "",
+            "source_name": "Gemini web grounding",
+            "related": [],
+            "backend": "gemini_grounding",
+        }
+    except Exception as exc:
+        _LOGGER.debug("llm grounded fallback for %r failed: %s", q, exc)
+        return None
+
+
+_GEMINI_GENERATE_ENDPOINT = (
+    "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent")
+
+
+async def _gemini_grounded_search(hass, api_key: str, model: str, q: str) -> Optional[str]:
+    """Ask Gemini to answer using its own Google Search grounding tool.
+
+    Deliberately talks to Gemini's NATIVE generateContent REST endpoint, not
+    the OpenAI-compatible surface: as of writing, Google's own OpenAI-compat
+    `extra_body` docs list `google_search` grounding as supported for image
+    generation only, not for chat completions — so requesting it there is
+    silently ignored and the model just answers from its stale training data.
+    The native REST `tools: [{"google_search": {}}]` declaration is the
+    documented, working mechanism. One-shot, no conversation history, no
+    JARVIS tool declarations. Returns the answer text, or None on any
+    failure — never raises, this is a best-effort fallback."""
+    if not api_key or not model:
+        return None
+    import aiohttp
+    from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+    # The model picker often stores the "models/" prefix; the endpoint template
+    # already supplies it, so strip it to avoid a double "models/models/..." path.
+    model = model.removeprefix("models/")
+
+    session = async_get_clientsession(hass)
+    url = _GEMINI_GENERATE_ENDPOINT.format(model=model)
+    body = {
+        "contents": [{
+            "role": "user",
+            "parts": [{"text": f"Search the web and answer concisely: {q}"}],
+        }],
+        "tools": [{"google_search": {}}],
+    }
+    try:
+        async with session.post(
+            url, params={"key": api_key}, json=body,
+            timeout=aiohttp.ClientTimeout(total=_TIMEOUT),
+        ) as resp:
+            if resp.status not in (200, 202):
+                _LOGGER.debug(
+                    "gemini grounded search returned HTTP %s", resp.status)
+                return None
+            data = await resp.json(content_type=None)
+    except Exception as exc:
+        _LOGGER.debug("gemini grounded search request failed: %s", exc)
+        return None
+
+    try:
+        parts = (data.get("candidates") or [{}])[0].get("content", {}).get("parts") or []
+        text = "".join(p.get("text", "") for p in parts if isinstance(p, dict)).strip()
+        return text or None
+    except Exception:
+        return None
+
 
 
 async def _duckduckgo(hass, q: str) -> dict:

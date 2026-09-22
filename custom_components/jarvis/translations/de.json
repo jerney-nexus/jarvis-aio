@@ -151,7 +151,8 @@
           "directive_preset": "Direktiven-Vorlage",
           "directive": "Eigene Direktive (optional, überschreibt Vorlage)",
           "llm_provider": "Anbieter des Gesprächsmodells",
-          "use_hass_api": "Haussteuerung aktivieren (Licht, Klima, Schlösser usw.)"
+          "use_hass_api": "Haussteuerung aktivieren (Licht, Klima, Schlösser usw.)",
+          "web_research_llm_fallback": "Websuche bei leerem Ergebnis des Standard-Backends an die eigene Websuche des LLM eskalieren lassen"
         }
       },
       "core_model": {
