@@ -272,3 +272,38 @@ def test_manual_set_mode_cannot_interleave_with_auto_decision(modes, monkeypatch
                       ("manual_set", "party")]
     assert modes.active_mode() == "party"
 
+
+def test_mode_info_waits_for_writer_snapshot(modes, monkeypatch):
+    import threading
+
+    entered_persist = threading.Event()
+    release_persist = threading.Event()
+    reader_done = threading.Event()
+    result = {}
+
+    def gated_persist():
+        entered_persist.set()
+        release_persist.wait(timeout=2)
+
+    monkeypatch.setattr(modes, "_persist", gated_persist)
+
+    writer = threading.Thread(target=lambda: modes.set_mode("party", "manual"))
+    writer.start()
+    assert entered_persist.wait(timeout=2)
+
+    def _read_info():
+        result.update(modes.mode_info())
+        reader_done.set()
+
+    reader = threading.Thread(target=_read_info)
+    reader.start()
+    assert not reader_done.wait(timeout=0.3)
+
+    release_persist.set()
+    writer.join(timeout=2)
+    reader.join(timeout=2)
+
+    assert result["active"] == "party"
+    assert result["reason"] == "manual"
+    assert result["overrides"]["proactive"] is False
+

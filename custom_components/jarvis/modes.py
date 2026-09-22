@@ -126,22 +126,23 @@ def _all_modes() -> dict[str, dict]:
 
 def _load() -> None:
     global _loaded
-    if _loaded:
-        return
-    _loaded = True
-    try:
-        if os.path.exists(MODE_STATE_PATH):
-            with open(MODE_STATE_PATH) as f:
-                d = json.load(f)
-            mode = str(d.get("mode", DEFAULT_MODE)).lower()
-            if mode in _all_modes():
-                _state["mode"] = mode
-                _state["since"] = float(d.get("since", time.time()))
-                _state["reason"] = str(d.get("reason", "restored"))
-                if mode != DEFAULT_MODE:
-                    _LOGGER.info("JARVIS mode RESTORED: %s", mode)
-    except Exception as exc:
-        _LOGGER.warning("mode state restore failed: %s", exc)
+    with _state_lock:
+        if _loaded:
+            return
+        _loaded = True
+        try:
+            if os.path.exists(MODE_STATE_PATH):
+                with open(MODE_STATE_PATH) as f:
+                    d = json.load(f)
+                mode = str(d.get("mode", DEFAULT_MODE)).lower()
+                if mode in _all_modes():
+                    _state["mode"] = mode
+                    _state["since"] = float(d.get("since", time.time()))
+                    _state["reason"] = str(d.get("reason", "restored"))
+                    if mode != DEFAULT_MODE:
+                        _LOGGER.info("JARVIS mode RESTORED: %s", mode)
+        except Exception as exc:
+            _LOGGER.warning("mode state restore failed: %s", exc)
 
 
 def _persist() -> None:
@@ -159,28 +160,32 @@ def _persist() -> None:
 
 def active_mode() -> str:
     """The currently active mode name (always valid; 'normal' if unset)."""
-    _load()
-    return _state.get("mode", DEFAULT_MODE)
+    with _state_lock:
+        _load()
+        return _state.get("mode", DEFAULT_MODE)
 
 
 def mode_info() -> dict:
     """Full status for the panel/agent: active mode, since, reason, and the
     resolved override profile."""
-    _load()
-    name = active_mode()
-    modes = _all_modes()
-    spec = modes.get(name, modes[DEFAULT_MODE])
-    return {
-        "active": name,
-        "since": _state.get("since", 0.0),
-        "reason": _state.get("reason", ""),
-        "description": spec.get("description", ""),
-        "overrides": _resolve(name),
-        "available": [
-            {"name": n, "description": s.get("description", "")}
-            for n, s in sorted(modes.items())
-        ],
-    }
+    with _state_lock:
+        _load()
+        name = _state.get("mode", DEFAULT_MODE)
+        since = _state.get("since", 0.0)
+        reason = _state.get("reason", "")
+        modes = _all_modes()
+        spec = modes.get(name, modes[DEFAULT_MODE])
+        return {
+            "active": name,
+            "since": since,
+            "reason": reason,
+            "description": spec.get("description", ""),
+            "overrides": _resolve(name),
+            "available": [
+                {"name": n, "description": s.get("description", "")}
+                for n, s in sorted(modes.items())
+            ],
+        }
 
 
 def _resolve(name: str) -> dict:
@@ -201,7 +206,8 @@ def _resolve(name: str) -> dict:
 
 def mode_overrides() -> dict:
     """The active mode's resolved behavior profile."""
-    return _resolve(active_mode())
+    with _state_lock:
+        return _resolve(active_mode())
 
 
 def mode_allows_proactive() -> bool:
