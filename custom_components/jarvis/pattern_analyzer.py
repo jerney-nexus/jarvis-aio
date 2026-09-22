@@ -229,6 +229,39 @@ def service_for(entity_id: str, state: str) -> Optional[dict]:
     return None
 
 
+def _pretty_entity(entity_id: str) -> str:
+    """Human label from an entity_id: drop the domain, de-underscore, and collapse
+    Home Assistant's frequent duplicate-slug tails (``eliana_s_room_eliana_s_room``
+    -> ``eliana s room``). Pure, best-effort — falls back to the raw id."""
+    if not entity_id:
+        return entity_id
+    name = entity_id.split(".", 1)[-1] if "." in entity_id else entity_id
+    words = name.replace("_", " ").split()
+    for size in range(len(words) // 2, 0, -1):
+        if words[:size] == words[size:2 * size]:
+            words = words[size:]
+            break
+    return " ".join(words).strip() or entity_id
+
+
+def _action_verb(entity_id: str, state: str) -> str:
+    """The action an automation would take to reach (entity, state) — 'turn on',
+    'unlock', 'close', 'activate' — or '' when there is no clean device action
+    (a passive sensor/camera state), so callers can describe the pattern as an
+    observed correlation rather than imply an automatable outcome. Pure."""
+    if not service_for(entity_id, state):
+        return ""
+    domain = entity_id.split(".")[0] if "." in entity_id else ""
+    s = str(state).lower().strip()
+    if domain == "lock":
+        return "lock" if s == "locked" else "unlock"
+    if domain == "cover":
+        return "open" if s in ("open", "opening") else "close"
+    if domain == "scene":
+        return "activate"
+    return f"turn {s}"
+
+
 def explain_suggestion(pattern_type: str, details: dict, count: int) -> dict:
     """Turn a suggestion's evidence into a human 'why' for the review UI
     (v6.80.0). Returns {headline, evidence:[...]} — the observations that led to
@@ -265,10 +298,36 @@ def explain_suggestion(pattern_type: str, details: dict, count: int) -> dict:
                 ev.append(f"Specifically when {person} is home")
         elif pattern_type == "sequence":
             headline = "One action reliably follows another"
-            first = d.get("first") or d.get("trigger")
-            then = d.get("then") or d.get("action")
-            if first and then:
-                ev.append(f"After {first}, {then} usually follows")
+            first = d.get("first")
+            then = d.get("then")
+            trig = d.get("trigger") if isinstance(d.get("trigger"), dict) else None
+            act = d.get("action") if isinstance(d.get("action"), dict) else None
+            # Trigger side: accept a pre-formatted string (first) or the stored
+            # {entity, state} dict — the dict path is what production actually
+            # stores, and formatting it raw used to leak "{'entity': ...}" into
+            # the review card.
+            if isinstance(first, str) and first:
+                trig_txt = first
+            elif trig and trig.get("entity"):
+                trig_txt = _trigger_phrase(trig["entity"], trig["state"])
+            else:
+                trig_txt = ""
+            # Outcome side: lead with what an automation would DO, not just the
+            # observed following state.
+            if isinstance(then, str) and then:
+                outcome = f"{then} usually follows"
+            elif act and act.get("entity"):
+                verb = _action_verb(act["entity"], act.get("state", ""))
+                label = _pretty_entity(act["entity"])
+                outcome = (f"JARVIS can {verb} {label}" if verb
+                           else f"{label} usually turns {act.get('state', '')} "
+                                f"(a correlation with no device action to automate)")
+            else:
+                outcome = ""
+            if trig_txt and outcome:
+                ev.append(f"{trig_txt}, {outcome}")
+            elif outcome:
+                ev.append(outcome[0].upper() + outcome[1:])
             ev.append(f"Seen {count} times in 30 days")
             if d.get("window_seconds"):
                 ev.append(f"Usually within {int(d['window_seconds'])}s")
@@ -1013,9 +1072,18 @@ class PatternAnalyzer:
             if nc:
                 conds.append(nc)
             cond = conds if conds else None
-            desc = (f"{_trigger_phrase(ea, sa)}, {eb} turns {sb} shortly after "
-                    f"({count} times in 30 days, ~{mean_lag}s later)"
-                    + _condition_phrase(cond))
+            _verb = _action_verb(eb, sb)
+            _when = f"({count} times in 30 days, ~{mean_lag}s later)"
+            if _verb:
+                # Lead with the outcome the automation would produce.
+                desc = (f"{_trigger_phrase(ea, sa)}, JARVIS will {_verb} {eb} "
+                        f"{_when}" + _condition_phrase(cond))
+            else:
+                # No clean device action (e.g. two camera/sensor states that just
+                # co-occur) — say so plainly instead of implying it can be automated.
+                desc = (f"{_trigger_phrase(ea, sa)}, {eb} usually turns {sb} "
+                        f"shortly after — no device action to automate {_when}"
+                        + _condition_phrase(cond))
             patterns.append(DetectedPattern(
                 pattern_type="sequence",
                 description=desc,
