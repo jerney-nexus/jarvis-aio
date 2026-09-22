@@ -44,6 +44,32 @@ def test_sequence_explanation(pa):
     assert "door opens" in joined and "hall light on" in joined
 
 
+def test_sequence_explanation_from_stored_dicts(pa):
+    # Production stores trigger/action as {entity, state} dicts (not first/then
+    # strings). The card must render human phrases — never a raw "{'entity': ...}"
+    # dict — and describe what the automation would DO.
+    out = pa.explain_suggestion(
+        "sequence",
+        {"trigger": {"entity": "binary_sensor.front_door", "state": "on"},
+         "action": {"entity": "light.hallway", "state": "on"}}, 40)
+    joined = " ".join(out["evidence"])
+    assert "{'entity'" not in joined and "{\"entity\"" not in joined
+    assert "turn on" in joined.lower()
+    assert "hallway" in joined.lower()
+
+
+def test_sequence_explanation_marks_non_actionable_correlation(pa):
+    # Two camera "idle" states just co-occur — there is no device action to
+    # automate, so the card must say so rather than imply an outcome.
+    out = pa.explain_suggestion(
+        "sequence",
+        {"trigger": {"entity": "camera.front_door", "state": "idle"},
+         "action": {"entity": "camera.hall", "state": "idle"}}, 3315)
+    joined = " ".join(out["evidence"]).lower()
+    assert "{'entity'" not in joined
+    assert "no device action to automate" in joined
+
+
 def test_unknown_pattern_type_is_safe(pa):
     out = pa.explain_suggestion("something_new", {}, 5)
     assert out["headline"]
