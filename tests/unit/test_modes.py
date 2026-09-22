@@ -171,3 +171,45 @@ def test_auto_evaluate_respects_hands_off(modes, monkeypatch):
     modes.set_mode("normal")
     assert modes.auto_evaluate(False) is None             # auto off → no switch
     assert modes.active_mode() == "normal"
+
+
+# ── concurrency (v?.?.?): auto_evaluate() and set_mode() now run on separate
+# executor threads (agent.py/websocket.py calls vs. the cognitive tick), so
+# state mutation + persistence must be serialized. ─────────────────────────
+
+def test_concurrent_set_mode_and_auto_evaluate_dont_corrupt_state(modes):
+    import json
+    import threading
+
+    errors = []
+
+    def _hammer_set_mode():
+        try:
+            for _ in range(50):
+                modes.set_mode("party", "manual")
+                modes.set_mode("normal", "manual")
+        except Exception as exc:  # pragma: no cover - failure path
+            errors.append(exc)
+
+    def _hammer_auto_evaluate():
+        try:
+            for i in range(50):
+                modes.auto_evaluate(occupied=bool(i % 2))
+        except Exception as exc:  # pragma: no cover - failure path
+            errors.append(exc)
+
+    threads = [
+        threading.Thread(target=_hammer_set_mode),
+        threading.Thread(target=_hammer_auto_evaluate),
+        threading.Thread(target=_hammer_auto_evaluate),
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert not errors
+    # The persisted file must always be valid, never half-written/corrupted.
+    with open(modes.MODE_STATE_PATH) as f:
+        data = json.load(f)
+    assert data["mode"] in modes._all_modes()

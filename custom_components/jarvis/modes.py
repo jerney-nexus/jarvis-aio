@@ -26,10 +26,16 @@ from __future__ import annotations
 import json
 import logging
 import os
+import threading
 import time
 from typing import Optional
 
 _LOGGER = logging.getLogger(__name__)
+
+# set_mode()/auto_evaluate() run on executor threads from several callers
+# (agent.py, websocket.py, the cognitive tick); this serializes state mutation
+# and the atomic tmp-file write so concurrent callers can't interleave.
+_state_lock = threading.Lock()
 
 MODE_STATE_PATH = "/config/jarvis/mode_state.json"
 DEFAULT_MODE = "normal"
@@ -220,16 +226,17 @@ def mode_banter_level() -> Optional[int]:
 def set_mode(name: str, reason: str = "") -> dict:
     """Activate a mode. Returns {ok, mode, error?}. Unknown names are rejected
     with the list of valid modes. Never raises."""
-    _load()
-    key = str(name or "").strip().lower()
-    modes = _all_modes()
-    if key not in modes:
-        return {"ok": False, "error": f"unknown mode '{name}'",
-                "available": sorted(modes.keys())}
-    _state["mode"] = key
-    _state["since"] = time.time()
-    _state["reason"] = str(reason or "")
-    _persist()
+    with _state_lock:
+        _load()
+        key = str(name or "").strip().lower()
+        modes = _all_modes()
+        if key not in modes:
+            return {"ok": False, "error": f"unknown mode '{name}'",
+                    "available": sorted(modes.keys())}
+        _state["mode"] = key
+        _state["since"] = time.time()
+        _state["reason"] = str(reason or "")
+        _persist()
     _LOGGER.info("JARVIS mode → %s%s", key, f" ({reason})" if reason else "")
     return {"ok": True, "mode": key, "overrides": _resolve(key)}
 
@@ -259,12 +266,16 @@ def auto_evaluate(occupied: bool) -> Optional[dict]:
     try:
         if not auto_enabled():
             return None
-        _load()
-        cur = _state.get("mode", DEFAULT_MODE)
-        if not occupied and cur != "away":
-            return set_mode("away", "auto: home empty")
-        if occupied and cur == "away":
-            return set_mode(DEFAULT_MODE, "auto: someone home")
+        with _state_lock:
+            _load()
+            cur = _state.get("mode", DEFAULT_MODE)
+            switch_to = None
+            if not occupied and cur != "away":
+                switch_to = ("away", "auto: home empty")
+            elif occupied and cur == "away":
+                switch_to = (DEFAULT_MODE, "auto: someone home")
+        if switch_to:
+            return set_mode(*switch_to)
     except Exception as exc:
         _LOGGER.debug("auto_evaluate failed: %s", exc)
     return None
