@@ -2723,7 +2723,9 @@ def _flatten_tool_calls_for_replay(messages: list[dict]) -> list[dict]:
                 text += "\nResult: " + " | ".join(r for r in results if r)
             merged = f"[tool result] {text}"
             if out and out[-1].get("role") == "user":
-                out[-1]["content"] = f'{out[-1].get("content", "")}\n{merged}'
+                prev = dict(out[-1])
+                prev["content"] = f'{prev.get("content", "")}\n{merged}'
+                out[-1] = prev
             else:
                 out.append({"role": "user", "content": merged})
             i = j

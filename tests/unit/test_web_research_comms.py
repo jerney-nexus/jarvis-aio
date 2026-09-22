@@ -156,6 +156,41 @@ async def test_research_keeps_original_error_for_non_gemini_provider(wr, monkeyp
     assert out["error"] == "no results"
 
 
+async def test_gemini_grounded_search_strips_models_prefix(wr, monkeypatch, fake_hass):
+    # Regression: a model id pasted with the "models/" prefix (as the Gemini
+    # model picker often stores it) must not double up with the endpoint
+    # template's own "models/{model}" segment.
+    import sys
+    captured = {}
+
+    class _FakeResp:
+        status = 200
+
+        async def json(self, content_type=None):
+            return {"candidates": [{"content": {"parts": [{"text": "answer"}]}}]}
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+    class _FakeSession:
+        def post(self, url, params=None, json=None, timeout=None):
+            captured["url"] = url
+            return _FakeResp()
+
+    aiohttp_client = sys.modules["homeassistant.helpers.aiohttp_client"]
+    monkeypatch.setattr(aiohttp_client, "async_get_clientsession", lambda hass: _FakeSession())
+
+    text = await wr._gemini_grounded_search(
+        fake_hass, "fake-key", "models/gemini-2.5-flash", "test query")
+
+    assert text == "answer"
+    assert captured["url"] == wr._GEMINI_GENERATE_ENDPOINT.format(model="gemini-2.5-flash")
+    assert "models/models" not in captured["url"]
+
+
 def test_new_agent_tools_registered(load):
     agent = load("agent")
     names = {t["function"]["name"] for t in agent.JARVIS_TOOLS}

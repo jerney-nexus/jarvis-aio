@@ -142,6 +142,10 @@ async def _gemini_grounded_search(hass, api_key: str, model: str, q: str) -> Opt
     import aiohttp
     from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
+    # The model picker often stores the "models/" prefix; the endpoint template
+    # already supplies it, so strip it to avoid a double "models/models/..." path.
+    model = model.removeprefix("models/")
+
     session = async_get_clientsession(hass)
     url = _GEMINI_GENERATE_ENDPOINT.format(model=model)
     body = {
