@@ -2348,7 +2348,7 @@ async def _tick():
     # unless the user has chosen hands-on control. Never affects safety.
     try:
         from . import modes as _auto_modes
-        _auto_modes.auto_evaluate(anyone_home)
+        await hass.async_add_executor_job(_auto_modes.auto_evaluate, anyone_home)
     except Exception as exc:
         _LOGGER.debug("auto-mode eval error: %s", exc)
 
