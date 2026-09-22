@@ -171,3 +171,154 @@ def test_auto_evaluate_respects_hands_off(modes, monkeypatch):
     modes.set_mode("normal")
     assert modes.auto_evaluate(False) is None             # auto off → no switch
     assert modes.active_mode() == "normal"
+
+
+# ── concurrency (v?.?.?): auto_evaluate() and set_mode() now run on separate
+# executor threads (agent.py/websocket.py calls vs. the cognitive tick), so
+# state mutation + persistence must be serialized. ─────────────────────────
+
+def test_concurrent_set_mode_and_auto_evaluate_dont_corrupt_state(modes):
+    import json
+    import threading
+
+    errors = []
+
+    def _hammer_set_mode():
+        try:
+            for _ in range(50):
+                modes.set_mode("party", "manual")
+                modes.set_mode("normal", "manual")
+        except Exception as exc:  # pragma: no cover - failure path
+            errors.append(exc)
+
+    def _hammer_auto_evaluate():
+        try:
+            for i in range(50):
+                modes.auto_evaluate(occupied=bool(i % 2))
+        except Exception as exc:  # pragma: no cover - failure path
+            errors.append(exc)
+
+    threads = [
+        threading.Thread(target=_hammer_set_mode),
+        threading.Thread(target=_hammer_auto_evaluate),
+        threading.Thread(target=_hammer_auto_evaluate),
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert not errors
+    # The persisted file must always be valid, never half-written/corrupted.
+    with open(modes.MODE_STATE_PATH) as f:
+        data = json.load(f)
+    assert data["mode"] in modes._all_modes()
+
+
+def test_manual_set_mode_cannot_interleave_with_auto_decision(modes, monkeypatch):
+    """Deterministic race: a manual set_mode() must not be able to land between
+    auto_evaluate()'s read-decide step and the set_mode() call that acts on it
+    — otherwise it gets silently clobbered by a now-stale auto decision."""
+    import threading
+
+    modes.set_mode("away", "seed")  # occupied=True below will decide away → normal
+
+    entered_gate = threading.Event()
+    release_gate = threading.Event()
+    order = []
+
+    real_set_mode = modes.set_mode
+    gate_used = threading.Event()
+
+    def gated_set_mode(name, reason=""):
+        # Pauses the auto thread right before it enters the real set_mode(),
+        # i.e. in the read-decide-write gap the outer lock in auto_evaluate()
+        # must cover. If that outer lock were dropped, the manual call below
+        # would be free to run to completion here and get clobbered once this
+        # thread resumes and applies its now-stale decision. order is recorded
+        # after the real call returns, so it reflects completion order (not
+        # invocation order), which is what actually matters for the race.
+        is_auto_call = not gate_used.is_set()
+        if is_auto_call:
+            gate_used.set()
+            entered_gate.set()
+            release_gate.wait(timeout=2)
+        result = real_set_mode(name, reason)
+        order.append(("auto_set" if is_auto_call else "manual_set", result["mode"]))
+        return result
+
+    monkeypatch.setattr(modes, "set_mode", gated_set_mode)
+
+    t_auto = threading.Thread(target=lambda: modes.auto_evaluate(occupied=True))
+    t_auto.start()
+    assert entered_gate.wait(timeout=2)  # auto thread paused just before set_mode()
+
+    manual_done = threading.Event()
+    manual_attempted = threading.Event()
+    gated_call = modes.set_mode
+
+    def _tracked_set_mode(name, reason=""):
+        manual_attempted.set()
+        return gated_call(name, reason)
+
+    monkeypatch.setattr(modes, "set_mode", _tracked_set_mode)
+
+    def _manual():
+        modes.set_mode("party", "manual")
+        manual_done.set()
+
+    t_manual = threading.Thread(target=_manual)
+    t_manual.start()
+    assert manual_attempted.wait(timeout=2)
+
+    # With the lock held across the whole read-decide-write, the manual call
+    # must still be blocked here — this is what would fail without the fix.
+    assert not manual_done.wait(timeout=0.3)
+
+    release_gate.set()
+    t_auto.join(timeout=2)
+    t_manual.join(timeout=2)
+
+    assert order == [("auto_set", "normal"), ("manual_set", "party")]
+    assert modes.active_mode() == "party"
+
+
+def test_reads_dont_block_on_writer_persist(modes, monkeypatch):
+    """Event-loop reads (active_mode/mode_info/mode_overrides) must stay
+    lock-free: a writer stalled mid-_persist() (holding _state_lock across the
+    file I/O) must never make a synchronous reader wait, since that reader may
+    be running on the HA event loop."""
+    import threading
+
+    entered_persist = threading.Event()
+    release_persist = threading.Event()
+    reader_done = threading.Event()
+    result = {}
+
+    def gated_persist(snapshot):
+        entered_persist.set()
+        release_persist.wait(timeout=2)
+
+    monkeypatch.setattr(modes, "_persist", gated_persist)
+
+    writer = threading.Thread(target=lambda: modes.set_mode("party", "manual"))
+    writer.start()
+    assert entered_persist.wait(timeout=2)
+
+    def _read_info():
+        result.update(modes.mode_info())
+        reader_done.set()
+
+    reader = threading.Thread(target=_read_info)
+    reader.start()
+    # The reader must complete immediately even though the writer is still
+    # blocked in _persist() holding _state_lock.
+    assert reader_done.wait(timeout=1)
+
+    release_persist.set()
+    writer.join(timeout=2)
+
+    assert result["active"] == "party"
+    assert result["reason"] == "manual"
+    assert result["overrides"]["proactive"] is False
+

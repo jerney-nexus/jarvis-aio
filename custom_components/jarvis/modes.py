@@ -26,10 +26,20 @@ from __future__ import annotations
 import json
 import logging
 import os
+import threading
 import time
 from typing import Optional
 
 _LOGGER = logging.getLogger(__name__)
+
+# Guards WRITERS only (set_mode()/auto_evaluate(), run on executor threads from
+# agent.py, websocket.py, and the cognitive tick). Reentrant so auto_evaluate()
+# can hold it across its read-decide-write instead of releasing it between the
+# decision and the set_mode() call that acts on it — otherwise a manual
+# set_mode() could land in that gap and get clobbered by a stale auto decision.
+# Readers never take this lock (see _state below) so a synchronous read on the
+# event loop can never block on the executor thread's file I/O in _persist().
+_state_lock = threading.RLock()
 
 MODE_STATE_PATH = "/config/jarvis/mode_state.json"
 DEFAULT_MODE = "normal"
@@ -86,7 +96,11 @@ _BUILTIN_MODES: dict[str, dict] = {
     },
 }
 
-# in-memory state (source of truth at runtime; mirrored to disk)
+# In-memory state (source of truth at runtime; mirrored to disk). Treated as
+# immutable: writers always build a whole new dict and swap the module-level
+# reference under _state_lock rather than mutating keys in place, so readers
+# can take a lock-free snapshot (dict reference reads/writes are atomic under
+# the GIL) and never block behind a writer's file I/O.
 _state = {"mode": DEFAULT_MODE, "since": 0.0, "reason": ""}
 _loaded = False
 
@@ -116,31 +130,40 @@ def _all_modes() -> dict[str, dict]:
 # ── persistence (atomic, reboot-safe — mirrors lockdown) ─────────────────────
 
 def _load() -> None:
-    global _loaded
+    # Double-checked lock: the common case (already loaded) is a lock-free
+    # boolean read so callers on the event loop never wait on a writer.
+    global _loaded, _state
     if _loaded:
         return
-    _loaded = True
-    try:
-        if os.path.exists(MODE_STATE_PATH):
-            with open(MODE_STATE_PATH) as f:
-                d = json.load(f)
-            mode = str(d.get("mode", DEFAULT_MODE)).lower()
-            if mode in _all_modes():
-                _state["mode"] = mode
-                _state["since"] = float(d.get("since", time.time()))
-                _state["reason"] = str(d.get("reason", "restored"))
-                if mode != DEFAULT_MODE:
-                    _LOGGER.info("JARVIS mode RESTORED: %s", mode)
-    except Exception as exc:
-        _LOGGER.warning("mode state restore failed: %s", exc)
+    with _state_lock:
+        if _loaded:
+            return
+        try:
+            if os.path.exists(MODE_STATE_PATH):
+                with open(MODE_STATE_PATH) as f:
+                    d = json.load(f)
+                mode = str(d.get("mode", DEFAULT_MODE)).lower()
+                if mode in _all_modes():
+                    _state = {
+                        "mode": mode,
+                        "since": float(d.get("since", time.time())),
+                        "reason": str(d.get("reason", "restored")),
+                    }
+                    if mode != DEFAULT_MODE:
+                        _LOGGER.info("JARVIS mode RESTORED: %s", mode)
+        except Exception as exc:
+            _LOGGER.warning("mode state restore failed: %s", exc)
+        _loaded = True
 
 
-def _persist() -> None:
+def _persist(snapshot: dict) -> None:
+    # Called with _state_lock held by the writer; takes an explicit snapshot
+    # rather than reading the global so it never races a subsequent swap.
     try:
         os.makedirs(os.path.dirname(MODE_STATE_PATH), exist_ok=True)
         tmp = MODE_STATE_PATH + ".tmp"
         with open(tmp, "w") as f:
-            json.dump(_state, f)
+            json.dump(snapshot, f)
         os.replace(tmp, MODE_STATE_PATH)
     except Exception as exc:
         _LOGGER.debug("mode state persist failed: %s", exc)
@@ -151,20 +174,23 @@ def _persist() -> None:
 def active_mode() -> str:
     """The currently active mode name (always valid; 'normal' if unset)."""
     _load()
-    return _state.get("mode", DEFAULT_MODE)
+    return _state.get("mode", DEFAULT_MODE)  # lock-free: single atomic dict read
 
 
 def mode_info() -> dict:
     """Full status for the panel/agent: active mode, since, reason, and the
     resolved override profile."""
     _load()
-    name = active_mode()
+    snapshot = _state  # local ref: immune to a concurrent writer's swap
+    name = snapshot.get("mode", DEFAULT_MODE)
+    since = snapshot.get("since", 0.0)
+    reason = snapshot.get("reason", "")
     modes = _all_modes()
     spec = modes.get(name, modes[DEFAULT_MODE])
     return {
         "active": name,
-        "since": _state.get("since", 0.0),
-        "reason": _state.get("reason", ""),
+        "since": since,
+        "reason": reason,
         "description": spec.get("description", ""),
         "overrides": _resolve(name),
         "available": [
@@ -226,10 +252,11 @@ def set_mode(name: str, reason: str = "") -> dict:
     if key not in modes:
         return {"ok": False, "error": f"unknown mode '{name}'",
                 "available": sorted(modes.keys())}
-    _state["mode"] = key
-    _state["since"] = time.time()
-    _state["reason"] = str(reason or "")
-    _persist()
+    global _state
+    with _state_lock:
+        new_state = {"mode": key, "since": time.time(), "reason": str(reason or "")}
+        _state = new_state  # atomic swap: concurrent readers see old or new, never partial
+        _persist(new_state)
     _LOGGER.info("JARVIS mode → %s%s", key, f" ({reason})" if reason else "")
     return {"ok": True, "mode": key, "overrides": _resolve(key)}
 
@@ -259,12 +286,16 @@ def auto_evaluate(occupied: bool) -> Optional[dict]:
     try:
         if not auto_enabled():
             return None
-        _load()
-        cur = _state.get("mode", DEFAULT_MODE)
-        if not occupied and cur != "away":
-            return set_mode("away", "auto: home empty")
-        if occupied and cur == "away":
-            return set_mode(DEFAULT_MODE, "auto: someone home")
+        # Hold the writer lock across read-decide-write (set_mode reacquires it
+        # reentrantly) so a concurrent manual set_mode() can't land in the gap
+        # and get clobbered by a now-stale auto decision.
+        with _state_lock:
+            _load()
+            cur = _state.get("mode", DEFAULT_MODE)
+            if not occupied and cur != "away":
+                return set_mode("away", "auto: home empty")
+            if occupied and cur == "away":
+                return set_mode(DEFAULT_MODE, "auto: someone home")
     except Exception as exc:
         _LOGGER.debug("auto_evaluate failed: %s", exc)
     return None

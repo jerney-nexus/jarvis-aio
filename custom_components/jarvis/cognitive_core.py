@@ -2345,10 +2345,12 @@ async def _tick():
             _LOGGER.debug("Lockdown tick error: %s", exc)
 
     # Auto operational-mode (v7.14.0): keep AWAY/NORMAL in step with occupancy
-    # unless the user has chosen hands-on control. Never affects safety.
+    # unless the user has chosen hands-on control. Never affects safety. Runs
+    # via executor job like the manual set_mode() callers in agent.py/websocket.py;
+    # modes.py serializes the shared state/persistence across all of them.
     try:
         from . import modes as _auto_modes
-        _auto_modes.auto_evaluate(anyone_home)
+        await hass.async_add_executor_job(_auto_modes.auto_evaluate, anyone_home)
     except Exception as exc:
         _LOGGER.debug("auto-mode eval error: %s", exc)
 
