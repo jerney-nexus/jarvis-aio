@@ -19,6 +19,13 @@ def core_for_tick(cognitive_core, fake_hass):
     fake_hass.async_add_executor_job = _async_add_executor_job
 
     core = cognitive_core._CORE
+    original = {
+        "hass": core.hass,
+        "config": core.config,
+        "lockdown_mgr": core.lockdown_mgr,
+        "proactive_mgr": core.proactive_mgr,
+        "safety_mgr": core.safety_mgr,
+    }
     core.hass = fake_hass
     core.config = {}
     core.lockdown_mgr = None
@@ -31,7 +38,11 @@ def core_for_tick(cognitive_core, fake_hass):
             raise RuntimeError("stop-marker: reached safety tick")
 
     core.safety_mgr = _StopAfterAutoMode()
-    return cognitive_core
+    try:
+        yield cognitive_core
+    finally:
+        for attr, value in original.items():
+            setattr(core, attr, value)
 
 
 async def test_auto_mode_eval_runs_on_executor_thread(core_for_tick, load, monkeypatch):
