@@ -876,6 +876,22 @@ setTimeout(async () => {
   el._settingsSection = "general";
   el._applySettingsSections();
 
+  // Floor Plan Editor lives outside the settings grid; it must be its OWN
+  // sub-tab, not shown under every section (it used to render under all of them).
+  const _fpPanel = el.shadowRoot.querySelector('.settings-extra-panel[data-section="floorplan"]');
+  el._settingsSection = "general"; el._applySettingsSections();
+  const _fpHiddenElsewhere = !!_fpPanel && _fpPanel.style.display === "none";
+  el._settingsSection = "floorplan"; el._applySettingsSections();
+  const _fpShownOnOwnTab = !!_fpPanel && _fpPanel.style.display !== "none";
+  const _fpBtn = [...el.shadowRoot.querySelectorAll(".settings-subnav-btn")]
+    .some(b => b.getAttribute("data-settings-section") === "floorplan");
+  el._settingsSection = "general"; el._applySettingsSections();
+  checks.push(
+    ["floor plan has its own settings sub-tab button", _fpBtn],
+    ["floor plan editor shows only on its own sub-tab",
+      _fpHiddenElsewhere && _fpShownOnOwnTab],
+  );
+
   // v7.85.1: option builders must tolerate a stale/missing selected entity (a
   // removed entity still referenced in config). This threw and blanked the whole
   // panel — _travelSensorOptions('sensor.gone') reading undefined.attributes.

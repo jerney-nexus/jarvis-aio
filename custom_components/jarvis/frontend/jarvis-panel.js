@@ -4207,6 +4207,7 @@ class JarvisPanel extends HTMLElement {
         ['general', 'General'], ['voice', 'Voice & Audio'],
         ['learning', 'Learning'], ['safety', 'Safety & Energy'],
         ['cameras', 'Cameras'], ['home', 'Home & Extras'],
+        ['floorplan', 'Floor Plan'],
       ].map(([id, label]) => `<button class="settings-subnav-btn ${this._settingsSection === id ? 'active' : ''}" data-settings-section="${id}">${label}</button>`).join('')}
     </div>
 
@@ -5015,8 +5016,8 @@ ${this._renderExcludedEntities(d)}
       </div>
     </div>
 
-    <!-- FLOOR PLAN EDITOR — full width below settings grid -->
-    <div class="panel" style="margin-top:16px;">
+    <!-- FLOOR PLAN EDITOR — full width below settings grid; its own sub-tab -->
+    <div class="panel settings-extra-panel" data-section="floorplan" style="margin-top:16px;">
       <div class="head">
         <span>Floor Plan Editor</span>
         <span class="side">LAYOUT</span>
@@ -5027,7 +5028,7 @@ ${this._renderExcludedEntities(d)}
     </div>
 
     <!-- DOORBELL TRAINING — backlog scan + analysed-event dataset -->
-    <div class="panel" style="margin-top:16px;">
+    <div class="panel settings-extra-panel" data-section="cameras" style="margin-top:16px;">
       <div class="head">
         <span>Doorbell Training</span>
         <span class="side">DATASET</span>
@@ -5212,6 +5213,12 @@ ${this._renderExcludedEntities(d)}
       // possibly-translated heading text.
       const section = card.dataset.section || "general";
       card.style.display = section === active ? "" : "none";
+    });
+    // Full-width panels that live OUTSIDE the grid (Floor Plan Editor,
+    // Doorbell Training) carry their own data-section. Without this they render
+    // under every sub-tab, since the loop above only touches grid children.
+    root.querySelectorAll(".settings-page .settings-extra-panel[data-section]").forEach(p => {
+      p.style.display = (p.getAttribute("data-section") === active) ? "" : "none";
     });
   }
 
