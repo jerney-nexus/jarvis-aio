@@ -36,6 +36,24 @@ CMD_WEBCOMPONENT:     Final = "jarvis-command"
 CMD_JS_FILENAME:      Final = "jarvis-command.js"
 
 
+def _remove_panel_if_present(hass: HomeAssistant, url_path: str) -> None:
+    """Remove a frontend panel only when it is actually registered.
+
+    HA's ``frontend.async_remove_panel`` logs a ``Removing unknown panel``
+    warning (and returns) when asked to remove a panel that was never
+    registered — the surrounding ``try/except`` can't suppress it because
+    nothing is raised. On first boot / entry reload the JARVIS panels aren't
+    registered yet, so an unconditional removal is pure log noise (issue #78).
+    Guard on the registered-panel state instead."""
+    panels = hass.data.get(getattr(frontend, "DATA_PANELS", "frontend_panels")) or {}
+    if url_path not in panels:
+        return
+    try:
+        frontend.async_remove_panel(hass, url_path)
+    except Exception:  # noqa: BLE001 — removal is best-effort
+        pass
+
+
 def _hash_file(path: str) -> str:
     """Content hash for cache-busting; mtime/time fallback if unreadable."""
     try:
@@ -61,10 +79,7 @@ async def _register_one(
         return False
     file_hash = await hass.async_add_executor_job(_hash_file, js_path)
     module_url = f"{PANEL_STATIC_URL}/{js_filename}?v={file_hash}"
-    try:
-        frontend.async_remove_panel(hass, url_path)
-    except Exception:
-        pass
+    _remove_panel_if_present(hass, url_path)
     try:
         await panel_custom.async_register_panel(
             hass,
@@ -113,11 +128,9 @@ async def async_register_panel(hass: HomeAssistant) -> bool:
         _LOGGER.debug("JARVIS panel: static path note: %s", exc)
 
     # Clean up the old separate Command Center panel from <=6.14.x — it's now
-    # folded into the main JARVIS panel, so the standalone entry must go.
-    try:
-        frontend.async_remove_panel(hass, CMD_URL_PATH)
-    except Exception:
-        pass
+    # folded into the main JARVIS panel, so the standalone entry must go (only
+    # if it's actually still registered, else it's just log noise — issue #78).
+    _remove_panel_if_present(hass, CMD_URL_PATH)
 
     # Single combined panel: the JARVIS Command Center (dashboard + cameras +
     # 3D residence + settings + logs all in one).
@@ -131,6 +144,9 @@ async def async_register_panel(hass: HomeAssistant) -> bool:
 
 def async_unregister_panel(hass: HomeAssistant) -> None:
     """Unregister the panel on entry unload. Best-effort, errors non-fatal."""
+    panels = hass.data.get(getattr(frontend, "DATA_PANELS", "frontend_panels")) or {}
+    if PANEL_URL_PATH not in panels:
+        return
     try:
         frontend.async_remove_panel(hass, PANEL_URL_PATH)
         _LOGGER.info("JARVIS panel unregistered")
