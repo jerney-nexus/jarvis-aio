@@ -1,0 +1,47 @@
+name: Translation
+description: Offer a new language, or report a wrong/missing translation
+labels: ["translation"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for helping JARVIS speak more languages! 🌍
+
+        You don't need to write any code — see
+        [the translation guide](../blob/main/custom_components/jarvis/frontend/i18n/README.md).
+        English is always the fallback, so partial translations are perfectly fine.
+        Run `python3 scripts/i18n_coverage.py` to see what's already covered.
+  - type: input
+    id: language
+    attributes:
+      label: Language
+      description: The language (and region, if relevant) and its code.
+      placeholder: "e.g. Swedish (sv), Brazilian Portuguese (pt-BR)"
+    validations:
+      required: true
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What is this about?
+      options:
+        - I'd like to add / complete this language
+        - A translation is wrong or awkward
+        - A string is showing in English that should be translatable
+    validations:
+      required: true
+  - type: textarea
+    id: details
+    attributes:
+      label: Details
+      description: >
+        For a fix, paste the English string and the current vs. suggested
+        translation. For a new language, let us know if you'll open a pull
+        request or would like a starter file to fill in.
+  - type: checkboxes
+    id: area
+    attributes:
+      label: Which part?
+      options:
+        - label: Panel UI (the dashboard)
+        - label: Spoken / notification text (freeze, intrusion, lockdown alerts)
+        - label: Not sure
