@@ -131,13 +131,53 @@ def _resolve_tts_entity(hass: HomeAssistant) -> str:
 
 # ── Area / entity resolution ──────────────────────────────────────────────────
 @callback
+def _area_slug(s: str) -> str:
+    """Normalize an area label for tolerant matching: lower-cased, whitespace
+    and underscores collapsed (so 'Home Office', 'home office' and
+    'home_office' all compare equal)."""
+    return "_".join(str(s or "").strip().lower().replace("_", " ").split())
+
+
 def _resolve_area_id(hass: HomeAssistant, target: str) -> str | None:
-    """Accept an area_id or an area name and return the canonical area_id."""
+    """Resolve a `jarvis.speak` target to a canonical HA area_id.
+
+    Accepts an area_id, an area name, an area **alias**, or a slug/spacing
+    variant of any of those. HA's own `async_get_area_by_name` only matches the
+    canonical name, so a request naming a room by its alias or by a
+    slug/spacing variant (e.g. "office" for an area whose id is a ULID and whose
+    name is "Office", or "home office" for "Home Office") previously fell
+    through and the announcement was silently dropped (issue #77). Returns None
+    only when nothing matches."""
+    if not target:
+        return None
     area_reg = ar.async_get(hass)
+    # 1. exact area_id
     if area_reg.async_get_area(target) is not None:
         return target
+    # 2. canonical name (HA normalizes case/whitespace itself)
     by_name = area_reg.async_get_area_by_name(target)
-    return by_name.id if by_name is not None else None
+    if by_name is not None:
+        return by_name.id
+    # 3. tolerant fallback: slug of id / name / any alias, across all areas.
+    tgt = _area_slug(target)
+    if tgt:
+        for area in area_reg.async_list_areas():
+            if _area_slug(getattr(area, "id", "")) == tgt or \
+                    _area_slug(getattr(area, "name", "")) == tgt:
+                return area.id
+            for alias in (getattr(area, "aliases", None) or ()):
+                if _area_slug(alias) == tgt:
+                    return area.id
+    return None
+
+
+def _known_area_labels(hass: HomeAssistant) -> list[str]:
+    """Area names for a helpful 'unknown area' log (so the failure explains
+    itself rather than just naming the unmatched target — issue #77)."""
+    try:
+        return sorted(a.name for a in ar.async_get(hass).async_list_areas() if a.name)
+    except Exception:  # noqa: BLE001
+        return []
 
 
 @callback
@@ -486,7 +526,10 @@ async def _dispatch_speak(hass: HomeAssistant, data: dict) -> None:
 
     area_id = _resolve_area_id(hass, target)
     if area_id is None:
-        _LOGGER.warning("jarvis.speak: unknown area %r — ignoring", target)
+        known = _known_area_labels(hass)
+        _LOGGER.warning(
+            "jarvis.speak: unknown area %r — ignoring (known areas: %s)",
+            target, ", ".join(known) if known else "none registered")
         return
     if user_id:
         # Reserved for per-user biometric/profile filtering; threaded through
