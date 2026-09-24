@@ -84,3 +84,23 @@ def test_build_system_prompt_appends_language_for_non_english():
             sys.modules["jc.directive_helper"] = stub
         else:
             sys.modules.pop("jc.directive_helper", None)
+
+
+def test_configured_language_strips_region_and_lowercases(language):
+    assert language.configured_language(_hass("de-DE")) == "de"
+    assert language.configured_language(_hass("EN")) == "en"
+
+
+def test_configured_language_defaults_to_en(language):
+    assert language.configured_language(_hass(None)) == "en"
+    assert language.configured_language(types.SimpleNamespace(config=None)) == "en"
+
+
+def test_language_name_empty_for_english(language):
+    assert language.language_name(_hass("en")) == ""
+    assert language.language_name(_hass(None)) == ""
+
+
+def test_language_name_maps_and_falls_back(language):
+    assert language.language_name(_hass("de")) == "German"
+    assert language.language_name(_hass("xx")) == "xx"
