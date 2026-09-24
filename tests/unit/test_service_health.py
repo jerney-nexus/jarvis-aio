@@ -378,8 +378,13 @@ def test_routines_check_ok_when_identity_confidence_normal(sh, monkeypatch):
 
 
 # ── conversation-store health check (v7.42.0) ─────────────────────────────────
-def test_database_check_off_when_not_created(sh):
-    # In the sandbox the real DB path doesn't exist -> OFF, never a false DOWN.
+def test_database_check_off_when_not_created(sh, monkeypatch):
+    # Stub the DB path explicitly so this doesn't depend on ambient filesystem
+    # state (e.g. a real conversations.db left by an unrelated process/test).
+    fake = types.ModuleType("jc.database")
+    fake.DB_PATH = type("P", (), {"exists": staticmethod(lambda: False)})()
+    monkeypatch.setitem(sys.modules, "jc.database", fake)
+    monkeypatch.setattr(sys.modules["jc"], "database", fake, raising=False)
     out = sh._check_database(_Hass({}))
     assert out["status"] == "off"
 
