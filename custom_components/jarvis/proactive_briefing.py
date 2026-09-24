@@ -242,7 +242,7 @@ async def _trigger_briefing(
     # Try to use the existing briefing service
     try:
         from .briefing import _gather_weather, _gather_open_things, _gather_overnight_events
-        from .briefing import _gather_calendar, _gather_energy_anomalies, _time_greeting
+        from .briefing import _gather_calendar, _gather_energy_anomalies, _greeting_instruction
         from .directive_helper import build_system_prompt
         from .tts_helper import resolve_tts_for_context, async_announce
         from .audio_routing import observer_speak_target
@@ -263,11 +263,10 @@ async def _trigger_briefing(
             context_lines.append(extra_context)
 
         context = "\n".join(context_lines)
-        greeting = _time_greeting()
 
         task = (
             f"You are delivering a proactive briefing ({reason}) to {honorific}. "
-            f"Begin with '{greeting}, {honorific}.' "
+            f"{_greeting_instruction(hass, honorific)}"
             f"Cover only the important items. Under 100 words. Be direct."
         )
         system = build_system_prompt(hass, honorific, task)
@@ -296,7 +295,10 @@ async def _trigger_briefing(
                 {"role": "system", "content": system},
                 {"role": "user", "content": context},
             ],
-            None, 300, 0.6,
+            # Reasoning-tier models (e.g. gpt-oss) spend hidden tokens before the
+            # visible answer; 300 was too tight and truncated welcome briefings to
+            # just the greeting (issue #79). Give room to think *and* answer.
+            None, 1000, 0.6,
         )
         briefing_text = result.get("text", "").strip()
         if not briefing_text:

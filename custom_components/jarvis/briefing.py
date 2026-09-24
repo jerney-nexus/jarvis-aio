@@ -41,6 +41,27 @@ def _time_greeting() -> str:
     return "Still awake"
 
 
+def _greeting_instruction(hass, honorific: str) -> str:
+    """The briefing task's opening clause.
+
+    English homes pin the exact greeting ("Good evening, {honorific}."). On a
+    non-English home, forcing that literal English string fought the language
+    directive that build_system_prompt now appends (v7.99.5) — on reasoning-tier
+    models the model burned its token budget reconciling "open in English" vs
+    "answer in <language>" and truncated to just the greeting (issue #79). So
+    ask for the configured-language equivalent instead, preserving the
+    time-of-day greeting while letting it be spoken in the household language."""
+    from .language import language_name
+    greeting = _time_greeting()
+    lname = language_name(hass)
+    if not lname:
+        return f"Begin with '{greeting}, {honorific}.' "
+    return (
+        f"Open by greeting {honorific} with the {lname} equivalent of "
+        f"'{greeting}', then continue in {lname}. "
+    )
+
+
 def _gather_weather(hass: HomeAssistant) -> str:
     """Return a single-line weather summary from the first weather.* entity."""
     for state in hass.states.async_all("weather"):
@@ -241,7 +262,7 @@ async def async_briefing(
     greeting = _time_greeting()
     task = (
         f"You are delivering a spoken briefing to {honorific}. "
-        f"Begin with '{greeting}, {honorific}.' Then concisely cover the important items. "
+        f"{_greeting_instruction(hass, honorific)}Then concisely cover the important items. "
         f"Under 120 words. Be efficient — do not list trivia. "
         f"If nothing is noteworthy, say so briefly. "
         f"Your prime directive should inform what you surface — protect, steward, "

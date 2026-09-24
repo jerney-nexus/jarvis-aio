@@ -26,6 +26,26 @@ _LANG_NAMES = {
 }
 
 
+def configured_language(hass) -> str:
+    """Home Assistant's configured language as a primary ISO-639 subtag
+    (e.g. ``"de"`` for ``"de-DE"``). ``"en"`` when unset or on error. Never
+    raises."""
+    try:
+        return (getattr(hass.config, "language", None) or "en").split("-")[0].lower()
+    except Exception:
+        return "en"
+
+
+def language_name(hass) -> str:
+    """The display name of the home's configured language (e.g. ``"German"``),
+    or ``""`` for English / unset — i.e. non-empty exactly when JARVIS should
+    steer output to a non-English language. Never raises."""
+    lang = configured_language(hass)
+    if not lang or lang == "en":
+        return ""
+    return _LANG_NAMES.get(lang, lang)
+
+
 def language_directive(hass) -> str:
     """A system-prompt block steering output to the home's configured language.
 
@@ -34,13 +54,9 @@ def language_directive(hass) -> str:
     therefore completely unaffected). The user's own input language still wins
     if they write in something else. Never raises.
     """
-    try:
-        lang = (getattr(hass.config, "language", None) or "en").split("-")[0].lower()
-    except Exception:
+    lname = language_name(hass)
+    if not lname:
         return ""
-    if not lang or lang == "en":
-        return ""
-    lname = _LANG_NAMES.get(lang, lang)
     return (
         f"## Language\n"
         f"Respond in {lname} by default — this household's configured language "
