@@ -28,6 +28,7 @@ import asyncio
 import json
 import logging
 import os
+import tempfile
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -590,24 +591,51 @@ class SafetyManager:
                 "intrusion_alert", _lang, honorific=honorific.title(),
                 where=where, ctx=ctx)
             # Decision Record (v7.39.0): log the proactive intrusion judgement. Best-effort;
-            # a logging failure must never affect the alert.
+            # a logging failure must never affect the alert. The generation is
+            # captured before the executor job so a stale call-off cannot publish an
+            # old decision record after a newer intrusion cycle has started.
+            _dec_gen = None
             try:
-                from . import decision_record
-                _rid = decision_record.record(
-                    "intrusion",
-                    observation={"location": where, "breach": breach_name,
-                                 "alarm_armed": armed, "presence": "away"},
-                    interpretation={"assessment": "possible intrusion — investigating from the point of entry"},
-                    decision="raise initial intrusion alert and investigate silently",
-                    reason="motion while away with corroborating breach (open entry or armed alarm)",
+                from . import decision_record, intrusion as _intr_rec
+                _dec_gen = _intr_rec.begin_decision_generation()
+                _record_job = self.hass.async_add_executor_job(
+                    lambda: decision_record.record(
+                        "intrusion",
+                        observation={"location": where, "breach": breach_name,
+                                     "alarm_armed": armed, "presence": "away"},
+                        interpretation={"assessment": "possible intrusion — investigating from the point of entry"},
+                        decision="raise initial intrusion alert and investigate silently",
+                        reason="motion while away with corroborating breach (open entry or armed alarm)",
+                    )
                 )
+                try:
+                    _rid = await asyncio.shield(_record_job)
+                except asyncio.CancelledError:
+                    _rid = await asyncio.shield(_record_job)
+                    _dismissed_rid = _intr_rec.set_last_decision_id(
+                        _rid, generation=_dec_gen
+                    )
+                    if _dismissed_rid is not None:
+                        await self.hass.async_add_executor_job(
+                            _intr_rec._persist_dismissal, _dismissed_rid
+                        )
+                    raise
                 try:  # so a later call-off attaches to this exact record
-                    from . import intrusion as _intr_rec
-                    _intr_rec.set_last_decision_id(_rid)
+                    _dismissed_rid = _intr_rec.set_last_decision_id(
+                        _rid, generation=_dec_gen
+                    )
+                    if _dismissed_rid is not None:
+                        await self.hass.async_add_executor_job(
+                            _intr_rec._persist_dismissal, _dismissed_rid
+                        )
                 except Exception:
                     pass
             except Exception:
-                pass
+                if _dec_gen is not None:
+                    _intr_rec.set_last_decision_id(None, generation=_dec_gen)
+            finally:
+                if _dec_gen is not None:
+                    _intr_rec.clear_pending_generation(_dec_gen)
             # Learned damping (v6.76.0): if this location/time pattern has been
             # repeatedly labelled a false alarm, stay QUIET on this initial
             # low-confidence ping. The investigation still runs underneath, so a
@@ -1744,6 +1772,8 @@ class AutonomyManager:
 
     def __init__(self):
         self._grants: dict[str, dict] = {}  # pattern_key -> {approvals,granted,...}
+        self._async_lock = asyncio.Lock()
+        self._sync_lock = __import__("threading").RLock()
         self._load()
 
     def _load(self) -> None:
@@ -1755,48 +1785,98 @@ class AutonomyManager:
             _LOGGER.warning("Autonomy grants load failed: %s", exc)
             self._grants = {}
 
-    def _save(self) -> None:
+    @staticmethod
+    def _save_snapshot(grants: dict[str, dict]) -> None:
         try:
-            os.makedirs(os.path.dirname(AUTONOMY_FILE), exist_ok=True)
-            with open(AUTONOMY_FILE, "w", encoding="utf-8") as f:
-                json.dump(self._grants, f, indent=2)
+            directory = os.path.dirname(AUTONOMY_FILE) or "."
+            os.makedirs(directory, exist_ok=True)
+            tmp_fd, tmp_path = tempfile.mkstemp(
+                dir=directory, prefix=".autonomy_", suffix=".tmp"
+            )
+            try:
+                with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
+                    json.dump(grants, f, indent=2)
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(tmp_path, AUTONOMY_FILE)
+            except Exception:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+                raise
         except Exception as exc:
             _LOGGER.warning("Autonomy grants save failed: %s", exc)
 
-    def record_acceptance(self, pattern_key: str, confidence: float = 1.0) -> dict:
+    def _save(self) -> None:
+        with self._sync_lock:
+            self._save_snapshot(self._grants)
+
+    async def _async_save(self, hass) -> None:
+        snapshot = {key: dict(value) for key, value in self._grants.items()}
+        await hass.async_add_executor_job(self._save_snapshot, snapshot)
+
+    def record_acceptance(self, pattern_key: str, confidence: float = 1.0,
+                          *, persist: bool = True) -> dict:
         """
         User accepted an offer. Increment its trust counter; may promote to
         autonomous. Returns the updated grant record.
         """
-        if not pattern_key:
-            return {}
-        g = self._grants.get(pattern_key, {
-            "approvals": 0, "granted": False, "confidence": confidence,
-            "first_seen": dt_util.utcnow().isoformat(),
-        })
-        g["approvals"] = g.get("approvals", 0) + 1
-        g["confidence"] = max(g.get("confidence", 0.0), confidence)
-        g["last_accepted"] = dt_util.utcnow().isoformat()
-        if (not g["granted"]
-                and g["approvals"] >= AUTONOMY_TRUST_THRESHOLD
-                and g["confidence"] >= AUTONOMY_MIN_CONFIDENCE):
-            g["granted"] = True
-            g["granted_at"] = dt_util.utcnow().isoformat()
-            _LOGGER.info(
-                "Autonomy GRANTED for '%s' after %d acceptances",
-                pattern_key, g["approvals"],
-            )
-        self._grants[pattern_key] = g
-        self._save()
-        return g
+        with self._sync_lock:
+            if not pattern_key:
+                return {}
+            g = self._grants.get(pattern_key, {
+                "approvals": 0, "granted": False, "confidence": confidence,
+                "first_seen": dt_util.utcnow().isoformat(),
+            })
+            g["approvals"] = g.get("approvals", 0) + 1
+            g["confidence"] = max(g.get("confidence", 0.0), confidence)
+            g["last_accepted"] = dt_util.utcnow().isoformat()
+            if (not g["granted"]
+                    and g["approvals"] >= AUTONOMY_TRUST_THRESHOLD
+                    and g["confidence"] >= AUTONOMY_MIN_CONFIDENCE):
+                g["granted"] = True
+                g["granted_at"] = dt_util.utcnow().isoformat()
+                _LOGGER.info(
+                    "Autonomy GRANTED for '%s' after %d acceptances",
+                    pattern_key, g["approvals"],
+                )
+            self._grants[pattern_key] = g
+            if persist:
+                self._save_snapshot(self._grants)
+            return g
 
-    def record_rejection(self, pattern_key: str) -> None:
+    async def async_record_acceptance(self, hass, pattern_key: str,
+                                      confidence: float = 1.0) -> dict:
+        async with self._async_lock:
+            grant = self.record_acceptance(pattern_key, confidence, persist=False)
+            save_task = asyncio.create_task(self._async_save(hass))
+            try:
+                await asyncio.shield(save_task)
+            except asyncio.CancelledError:
+                await asyncio.shield(save_task)
+                raise
+            return grant
+
+    def record_rejection(self, pattern_key: str, *, persist: bool = True) -> None:
         """User declined an offer — reset trust toward this pattern."""
-        if pattern_key in self._grants:
-            self._grants[pattern_key]["approvals"] = 0
-            self._grants[pattern_key]["granted"] = False
-            self._grants[pattern_key]["last_rejected"] = dt_util.utcnow().isoformat()
-            self._save()
+        with self._sync_lock:
+            if pattern_key in self._grants:
+                self._grants[pattern_key]["approvals"] = 0
+                self._grants[pattern_key]["granted"] = False
+                self._grants[pattern_key]["last_rejected"] = dt_util.utcnow().isoformat()
+                if persist:
+                    self._save_snapshot(self._grants)
+
+    async def async_record_rejection(self, hass, pattern_key: str) -> None:
+        async with self._async_lock:
+            self.record_rejection(pattern_key, persist=False)
+            save_task = asyncio.create_task(self._async_save(hass))
+            try:
+                await asyncio.shield(save_task)
+            except asyncio.CancelledError:
+                await asyncio.shield(save_task)
+                raise
 
     def is_autonomous(self, pattern_key: str) -> bool:
         """True if JARVIS may perform this convenience action without asking.
@@ -1814,15 +1894,28 @@ class AutonomyManager:
             pass
         return True
 
-    def revoke(self, pattern_key: str) -> bool:
+    def revoke(self, pattern_key: str, *, persist: bool = True) -> bool:
         """Manually revoke autonomy for a pattern (back to offer-only)."""
         if pattern_key in self._grants:
             self._grants[pattern_key]["granted"] = False
             self._grants[pattern_key]["approvals"] = 0
             self._grants[pattern_key]["revoked_at"] = dt_util.utcnow().isoformat()
-            self._save()
+            if persist:
+                self._save()
             return True
         return False
+
+    async def async_revoke(self, hass, pattern_key: str) -> bool:
+        async with self._async_lock:
+            changed = self.revoke(pattern_key, persist=False)
+            if changed:
+                save_task = asyncio.create_task(self._async_save(hass))
+                try:
+                    await asyncio.shield(save_task)
+                except asyncio.CancelledError:
+                    await asyncio.shield(save_task)
+                    raise
+            return changed
 
     def list_grants(self) -> list[dict]:
         """All tracked patterns with their trust state."""
@@ -2438,7 +2531,7 @@ async def _tick():
     try:
         from .pattern_analyzer import get_analyzer, set_thresholds
         analyzer = get_analyzer()
-        if analyzer.should_analyze():
+        if await hass.async_add_executor_job(analyzer.should_analyze):
             # Loosened-reins defaults (occurrences 4, confidence 0.55) — API spend
             # is no longer the constraint; user can tune via panel-saved keys.
             try:
@@ -2455,7 +2548,9 @@ async def _tick():
                 from .websocket import jarvis_log
                 jarvis_log("LEARN", f"Pattern analysis: {len(patterns)} patterns found")
                 # Notify about new high-confidence suggestions
-                pending = analyzer.get_pending_suggestions()
+                pending = await hass.async_add_executor_job(
+                    analyzer.get_pending_suggestions
+                )
                 if pending:
                     honorific = config.get("honorific", "sir")
                     jarvis_log(
@@ -2487,10 +2582,10 @@ async def _tick():
                 cognition.sample_occupancy(hass, now_t)
                 cognition.sample_presence(hass, now_t)
                 preds = (cognition.predict(hass, now_t)
-                         + cognition.predict_overdue(hass, now_t)
-                         + cognition.predict_presence(hass, now_t)
+                         + await cognition.async_predict_overdue(hass, now_t)
+                         + await cognition.async_predict_presence(hass, now_t)
                          + cognition.predict_proximity(hass, now_t)
-                         + cognition.predict_routine_start(hass, now_t))
+                         + await cognition.async_predict_routine_start(hass, now_t))
                 preds += await cognition.predict_departure(hass, now_t)
                 for pred in preds:
                     actions.append(pred)
@@ -3326,7 +3421,9 @@ async def accept_pending_offer() -> dict:
     ok = await _execute_action_data(_CORE.hass, offer.get("action_data", {}))
     pkey = offer.get("pattern_key", "")
     if ok and pkey and _CORE.autonomy_mgr:
-        grant = _CORE.autonomy_mgr.record_acceptance(pkey, confidence=0.9)
+        grant = await _CORE.autonomy_mgr.async_record_acceptance(
+            _CORE.hass, pkey, 0.9
+        )
         _CORE.actions_taken += 1
         return {
             "ok": True, "pattern_key": pkey,
@@ -3347,9 +3444,28 @@ def decline_pending_offer() -> dict:
     return {"ok": True}
 
 
+async def async_decline_pending_offer() -> dict:
+    """Clear the offer on the loop and persist autonomy changes off-loop."""
+    offer = _CORE.pending_offer
+    _CORE.pending_offer = None
+    if offer and _CORE.autonomy_mgr:
+        pkey = offer.get("pattern_key", "")
+        if pkey:
+            await _CORE.autonomy_mgr.async_record_rejection(_CORE.hass, pkey)
+    return {"ok": True}
+
+
 def revoke_autonomy(pattern_key: str) -> dict:
     """Revoke a previously-granted autonomous action."""
     if _CORE.autonomy_mgr and _CORE.autonomy_mgr.revoke(pattern_key):
+        return {"ok": True, "pattern_key": pattern_key}
+    return {"ok": False, "reason": "no such grant"}
+
+
+async def async_revoke_autonomy(pattern_key: str) -> dict:
+    """Mutate autonomy state on the loop and persist its snapshot off-loop."""
+    if _CORE.autonomy_mgr and await _CORE.autonomy_mgr.async_revoke(
+            _CORE.hass, pattern_key):
         return {"ok": True, "pattern_key": pattern_key}
     return {"ok": False, "reason": "no such grant"}
 

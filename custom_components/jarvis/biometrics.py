@@ -86,14 +86,16 @@ def _classify(entity_id: str, name: str, unit: str, device_class: str) -> Option
     return None
 
 
-def discover(hass) -> dict:
+def discover(hass=None, states=None) -> dict:
     """Find biometric entities on the system, grouped by kind. Returns
     {kind: [{entity, value, unit, name}]}. Never raises."""
     found: dict[str, list] = {}
-    try:
-        states = hass.states.async_all("sensor") + hass.states.async_all("binary_sensor")
-    except Exception:
-        return found
+    if states is None:
+        try:
+            states = (hass.states.async_all("sensor")
+                      + hass.states.async_all("binary_sensor"))
+        except Exception:
+            return found
     for st in states:
         try:
             eid = st.entity_id
@@ -132,13 +134,13 @@ def sleep_signal(hass) -> Optional[bool]:
     return None
 
 
-def wellbeing_context(hass) -> dict:
+def wellbeing_context(hass, states=None) -> dict:
     """A compact, non-clinical snapshot for JARVIS's context — what a wearable
     reports, phrased as ambient context, never as a health assessment. Returns
     {available, summary, readings}. Never raises and never diagnoses."""
     if not is_enabled():
         return {"available": False, "summary": "", "readings": {}}
-    bio = discover(hass)
+    bio = discover(hass, states)
     if not bio:
         return {"available": False,
                 "summary": "no biometric entities found — connect a wearable "

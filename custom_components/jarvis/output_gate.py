@@ -19,10 +19,12 @@ the mute set.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from collections import deque
 from dataclasses import dataclass, field
+from functools import partial
 from typing import Optional
 
 _LOGGER = logging.getLogger(__name__)
@@ -42,6 +44,7 @@ class Announcement:
     urgency: str
     message: str
     was_spoken: bool = True          # False if suppressed by gate
+    reservation_id: Optional[str] = None
 
 
 @dataclass
@@ -51,10 +54,12 @@ class GateState:
     muted_entities: set[str] = field(default_factory=set)
     muted_categories: set[str] = field(default_factory=set)
     recent_messages: deque = field(default_factory=lambda: deque(maxlen=20))
+    reservations: list[Announcement] = field(default_factory=list)
     mute_all: bool = False   # blanket kill switch set by shush(all=True)
 
 
 _STATE = GateState()
+_ANNOUNCEMENT_LOCK = asyncio.Lock()
 
 
 def _now() -> float:
@@ -96,7 +101,8 @@ def _budget_multiplier() -> float:
     return mult
 
 
-def can_announce(
+def _can_announce_with_multiplier(
+    budget_multiplier: float,
     *,
     entity_id: str,
     category: str,
@@ -104,6 +110,7 @@ def can_announce(
     message: str,
     max_per_hour: int = DEFAULT_MAX_PER_HOUR,
     dedup_minutes: int = DEFAULT_DEDUP_MINUTES,
+    reservation_id: Optional[str] = None,
 ) -> tuple[bool, str]:
     """
     Decide whether this announcement can proceed.
@@ -125,16 +132,24 @@ def can_announce(
     if category in _STATE.muted_categories:
         return False, f"category {category} is muted"
 
-    # Rate limit — tightened by the adaptive interruption budget when enabled
-    # (a no-op multiplier of 1.0 keeps the base cap otherwise).
-    eff_max = max(1, int(round(max_per_hour * _budget_multiplier())))
-    recent = _recent_within(_STATE.history, 3600)
+    # Rate limit — tightened by the adaptive interruption budget when enabled.
+    eff_max = max(1, int(round(max_per_hour * budget_multiplier)))
+    now = _now()
+    _STATE.reservations[:] = [
+        a for a in _STATE.reservations if a.timestamp >= now - 3600
+    ]
+    recent = _recent_within(_STATE.history, 3600) + _STATE.reservations
     if len(recent) >= eff_max and urgency not in ("high",):
         return False, f"rate limit ({len(recent)}/{eff_max}/hour)"
 
     # Dedup: is this message (or a substring) close to something recent?
     dedup_cutoff = _now() - dedup_minutes * 60
-    for past in _STATE.recent_messages:
+    recent_messages = list(_STATE.recent_messages) + [
+        {"timestamp": a.timestamp, "message": a.message}
+        for a in _STATE.reservations
+        if a.reservation_id != reservation_id
+    ]
+    for past in recent_messages:
         if past["timestamp"] < dedup_cutoff:
             continue
         if _messages_similar(past["message"], message):
@@ -143,7 +158,88 @@ def can_announce(
     return True, "ok"
 
 
-def record_announcement(
+def can_announce(
+    *,
+    entity_id: str,
+    category: str,
+    urgency: str,
+    message: str,
+    max_per_hour: int = DEFAULT_MAX_PER_HOUR,
+    dedup_minutes: int = DEFAULT_DEDUP_MINUTES,
+) -> tuple[bool, str]:
+    return _can_announce_with_multiplier(
+        _budget_multiplier(), entity_id=entity_id, category=category,
+        urgency=urgency, message=message, max_per_hour=max_per_hour,
+        dedup_minutes=dedup_minutes)
+
+
+async def _budget_multiplier_async(hass) -> float:
+    try:
+        from . import jarvis_config
+        enabled = await hass.async_add_executor_job(
+            jarvis_config.get, "adaptive_interruption_budget", False
+        )
+        if not enabled:
+            return 1.0
+    except Exception:
+        return 1.0
+    now = _now()
+    if now - _BUDGET_CACHE["ts"] < 60.0:
+        return _BUDGET_CACHE["mult"]
+    try:
+        from . import decision_record
+        budget = await hass.async_add_executor_job(
+            decision_record.interruption_budget
+        )
+        mult = float(budget.get("multiplier", 1.0))
+    except Exception:
+        mult = 1.0
+    _BUDGET_CACHE.update(ts=now, mult=mult)
+    return mult
+
+
+async def async_reserve_announcement(hass, **kwargs) -> tuple[bool, str, Optional[str]]:
+    """Reserve a slot for an announcement and return its reservation token.
+
+    Callers MUST pass the returned token to `async_record_announcement` (on
+    success) or `release_reservation` (on every other exit path, ideally in a
+    `finally` block) so a rejected/aborted caller can never release a
+    different caller's reservation and so slots aren't held for up to an
+    hour when a caller returns or raises before recording.
+    """
+    multiplier = await _budget_multiplier_async(hass)
+    async with _ANNOUNCEMENT_LOCK:
+        reservation_id = f"{time.monotonic_ns()}-{kwargs['entity_id']}-{len(_STATE.reservations)}"
+        allowed, reason = _can_announce_with_multiplier(
+            multiplier, reservation_id=reservation_id, **kwargs
+        )
+        if allowed:
+            _STATE.reservations.append(Announcement(
+                timestamp=_now(), entity_id=kwargs["entity_id"],
+                category=kwargs["category"], urgency=kwargs["urgency"],
+                message=kwargs["message"], was_spoken=True,
+                reservation_id=reservation_id,
+            ))
+        return allowed, reason, reservation_id if allowed else None
+
+
+async def release_reservation(hass, reservation_id: Optional[str]) -> None:
+    """Release a reserved slot without recording an announcement.
+
+    Use this in the `finally` of every post-admit path that doesn't end in
+    `async_record_announcement` (e.g. an early return or an exception),
+    otherwise the slot stays counted against the rate limit for up to an
+    hour.
+    """
+    if reservation_id is None:
+        return
+    async with _ANNOUNCEMENT_LOCK:
+        _STATE.reservations[:] = [
+            a for a in _STATE.reservations if a.reservation_id != reservation_id
+        ]
+
+
+def _record_announcement_state(
     *,
     entity_id: str,
     category: str,
@@ -166,6 +262,10 @@ def record_announcement(
             "timestamp": _now(),
             "message": message,
         })
+def _save_announcement_activity(
+    *, entity_id: str, category: str, urgency: str, message: str,
+    was_spoken: bool,
+) -> None:
     # v5.4.8: persist to SQLite for panel activity log
     try:
         from .database import save_activity
@@ -179,6 +279,40 @@ def record_announcement(
         )
     except Exception:
         pass  # DB write failure is non-fatal
+
+
+def record_announcement(
+    *,
+    entity_id: str,
+    category: str,
+    urgency: str,
+    message: str,
+    was_spoken: bool,
+) -> None:
+    _record_announcement_state(
+        entity_id=entity_id, category=category, urgency=urgency,
+        message=message, was_spoken=was_spoken)
+    _save_announcement_activity(
+        entity_id=entity_id, category=category, urgency=urgency,
+        message=message, was_spoken=was_spoken)
+
+
+async def async_record_announcement(hass, *, reservation_id: Optional[str] = None, **kwargs) -> None:
+    """Update gate state on the loop and persist activity off the event loop.
+
+    `reservation_id` must be the token returned by `async_reserve_announcement`
+    for this announcement, so ownership of the reservation being released is
+    always token-based (never guessed from matching fields).
+    """
+    async with _ANNOUNCEMENT_LOCK:
+        if reservation_id is not None:
+            _STATE.reservations[:] = [
+                a for a in _STATE.reservations if a.reservation_id != reservation_id
+            ]
+        _record_announcement_state(**kwargs)
+    await hass.async_add_executor_job(
+        partial(_save_announcement_activity, **kwargs)
+    )
 
 
 def shush(

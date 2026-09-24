@@ -22,6 +22,7 @@ with no change to the observer pipeline.
 
 from __future__ import annotations
 
+import asyncio
 import datetime
 import logging
 import math
@@ -640,13 +641,27 @@ def _log_decision(kind, observation, interpretation, decision, reason, confidenc
 
 
 def predict_overdue(hass, now: float = None) -> list:
-    """
-    Flag recurring daily events that haven't happened yet today by their usual
-    time ('the front door usually has activity by 07:45 — none yet today'). One
-    alert per entity per day. Returns action dicts for the gated announce path.
-    """
+    """Legacy sync API for the cognitive scheduler and tests."""
+    out, pending = _predict_overdue_loop(hass, now)
+    for key, today, args in pending:
+        _log_decision(*args)
+        _RECUR_ALERTED[key] = today
+    return out
+
+
+async def async_predict_overdue(hass, now: float = None) -> list:
+    """Loop-owned predictor with decision-record writes on the executor."""
+    out, pending = _predict_overdue_loop(hass, now)
+    for key, today, args in pending:
+        await hass.async_add_executor_job(_log_decision, *args)
+        _RECUR_ALERTED[key] = today
+    return out
+
+
+def _predict_overdue_loop(hass, now: float = None) -> tuple[list, list]:
     now = now or time.time()
     out = []
+    pending = []
     today = _local_day(now)
     now_secs = _secs_since_midnight(now)
     try:
@@ -659,22 +674,21 @@ def predict_overdue(hass, now: float = None) -> list:
             mean_s, std_s = routine
             tol = min(max(2 * std_s, RECUR_TOL_MIN), RECUR_TOL_MAX)
             if now_secs <= mean_s + tol:
-                continue                       # not past the usual time + grace yet
+                continue
             if entry.last_first_day == today:
-                continue                       # already happened today — fine
+                continue
             if _RECUR_ALERTED.get(eid) == today:
-                continue                       # already alerted today
-            _RECUR_ALERTED[eid] = today
+                continue
             st = hass.states.get(eid)
             name = st.attributes.get("friendly_name", eid) if st else eid
             usual = f"{int(mean_s // 3600):02d}:{int((mean_s % 3600) // 60):02d}"
-            _log_decision(
+            pending.append((eid, today, (
                 "anticipation_overdue",
                 {"entity": name, "entity_id": eid, "usual_active_by": usual},
                 {"predicted": "no activity yet, past the usual time"},
                 "flag overdue activity",
                 "recurring daily activity pattern",
-            )
+            )))
             out.append({
                 "type": "anticipation_overdue",
                 "urgency": "low",
@@ -687,6 +701,15 @@ def predict_overdue(hass, now: float = None) -> list:
             })
     except Exception as exc:
         _LOGGER.debug("predict_overdue error: %s", exc)
+    return out, pending
+
+
+def _predict_overdue_sync(hass, now: float = None) -> list:
+    """Compatibility alias for callers that used the pre-refactor helper."""
+    out, pending = _predict_overdue_loop(hass, now)
+    for key, today, args in pending:
+        _log_decision(*args)
+        _RECUR_ALERTED[key] = today
     return out
 
 
@@ -834,16 +857,17 @@ async def predict_departure(hass, now: float = None) -> list:
             key = "depart:%s:%s" % (title, start_dt.strftime("%Y%m%d%H%M"))
             if _RECUR_ALERTED.get(key) == today:
                 continue
-            _RECUR_ALERTED[key] = today
             mins_to = max(0, int((start_dt - now_dt).total_seconds() // 60))
             loc_str = (" at %s" % loc) if loc else ""
-            _log_decision(
+            await hass.async_add_executor_job(
+                _log_decision,
                 "anticipation_departure",
                 {"event": title, "location": loc or None, "minutes_until": mins_to},
                 {"predicted": "departure imminent — should leave soon"},
                 "announce departure heads-up",
                 "recurring calendar event + estimated travel time",
             )
+            _RECUR_ALERTED[key] = today
             out.append({
                 "type": "anticipation_departure", "urgency": "low",
                 "message": ("Heads up — %s%s begins in about %d minutes; "
@@ -862,22 +886,50 @@ ROUTINE_START_TOL_MIN = 30      # fire within this many minutes past the usual t
 
 
 def predict_routine_start(hass, now: float = None) -> list:
-    """Routine-start anticipation ("you usually start X around now"). Reads the
-    per-person routine store and, when it's about the usual time for a confident
-    time-based routine AND that person is currently home, surfaces it once.
-    Gated by routine_alerts_enabled. One prompt per routine per day. Never raises.
-    """
+    """Legacy sync API for routine-start anticipation."""
+    out, pending = _predict_routine_start_loop(hass, now)
+    for key, today, args in pending:
+        _log_decision(*args)
+        _RECUR_ALERTED[key] = today
+    return out
+
+
+async def async_predict_routine_start(hass, now: float = None) -> list:
+    """Loop-owned predictor with decision-record writes on the executor."""
+    from . import person_patterns
+    from . import jarvis_config
+    routines = await hass.async_add_executor_job(person_patterns.read)
+    alerts_enabled = await hass.async_add_executor_job(
+        jarvis_config.get, "routine_alerts_enabled", True
+    )
+    out, pending = _predict_routine_start_loop(
+        hass, now, routines, bool(alerts_enabled)
+    )
+    for key, today, args in pending:
+        await hass.async_add_executor_job(_log_decision, *args)
+        _RECUR_ALERTED[key] = today
+    return out
+
+
+def _predict_routine_start_loop(
+    hass, now: float = None, routines: list | None = None,
+    alerts_enabled: bool | None = None,
+) -> tuple[list, list]:
     import json as _json
     now = now or time.time()
     out = []
+    pending = []
     try:
         from . import jarvis_config
-        if not bool(jarvis_config.get("routine_alerts_enabled", True)):
-            return out
-        from . import person_patterns
-        routines = person_patterns.read()
+        if alerts_enabled is None:
+            alerts_enabled = bool(jarvis_config.get("routine_alerts_enabled", True))
+        if not alerts_enabled:
+            return out, pending
+        if routines is None:
+            from . import person_patterns
+            routines = person_patterns.read()
         if not routines:
-            return out
+            return out, pending
         try:
             from . import identity
             home = {identity.normalize(n) for n in identity._home_people(hass)}
@@ -889,7 +941,7 @@ def predict_routine_start(hass, now: float = None) -> list:
         for r in routines:
             person = r.get("person")
             if not person or person not in home:
-                continue  # only prompt when that person is actually home
+                continue
             if float(r.get("confidence") or 0.0) < ROUTINE_START_CONF_MIN:
                 continue
             try:
@@ -898,24 +950,23 @@ def predict_routine_start(hass, now: float = None) -> list:
                 data = {}
             hour = data.get("hour")
             if hour is None:
-                continue  # no time-of-day — can't anticipate a start
+                continue
             delta = now_min - int(hour) * 60
             if not (0 <= delta <= ROUTINE_START_TOL_MIN):
-                continue  # only as we reach the usual time, not long after
+                continue
             desc = str(r.get("description") or "").strip()
             if not desc:
                 continue
             key = "routine:%s:%s" % (person, r.get("id") or desc)
             if _RECUR_ALERTED.get(key) == today:
                 continue
-            _RECUR_ALERTED[key] = today
-            _log_decision(
+            pending.append((key, today, (
                 "anticipation_routine",
                 {"person": person, "routine": desc},
                 {"predicted": "routine usually starts around now"},
                 "prompt routine start",
                 "learned per-person routine",
-            )
+            )))
             out.append({
                 "type": "anticipation_routine", "urgency": "low",
                 "message": "Around this time you usually %s." % desc,
@@ -923,17 +974,40 @@ def predict_routine_start(hass, now: float = None) -> list:
             })
     except Exception as exc:
         _LOGGER.debug("predict_routine_start error: %s", exc)
+    return out, pending
+
+
+def _predict_routine_start_sync(hass, now: float = None) -> list:
+    """Compatibility alias for callers that used the pre-refactor helper."""
+    out, pending = _predict_routine_start_loop(hass, now)
+    for key, today, args in pending:
+        _log_decision(*args)
+        _RECUR_ALERTED[key] = today
     return out
 
 
 def predict_presence(hass, now: float = None) -> list:
-    """
-    Presence-routine overdue checks: 'usually out by HH:MM but still home' and
-    'usually home by HH:MM but not back yet'. One alert per direction per entity
-    per day. Returns action dicts for the gated announce path.
-    """
+    """Legacy sync API for presence-routine overdue checks."""
+    out, pending = _predict_presence_loop(hass, now)
+    for key, today, args in pending:
+        _log_decision(*args)
+        _RECUR_ALERTED[key] = today
+    return out
+
+
+async def async_predict_presence(hass, now: float = None) -> list:
+    """Loop-owned predictor with decision-record writes on the executor."""
+    out, pending = _predict_presence_loop(hass, now)
+    for key, today, args in pending:
+        await hass.async_add_executor_job(_log_decision, *args)
+        _RECUR_ALERTED[key] = today
+    return out
+
+
+def _predict_presence_loop(hass, now: float = None) -> tuple[list, list]:
     now = now or time.time()
     out = []
+    pending = []
     today = _local_day(now)
     now_secs = _secs_since_midnight(now)
     try:
@@ -946,21 +1020,19 @@ def predict_presence(hass, now: float = None) -> list:
             cur = st.state
             name = st.attributes.get("friendly_name", eid)
 
-            # Departure overdue — usually gone by now, still home, hasn't left today
             dep = _routine_of_pts(list(entry.depart_first))
             if dep and _is_home(cur) and entry.pres_depart_day != today:
                 m, sd = dep
                 tol = min(max(2 * sd, RECUR_TOL_MIN), RECUR_TOL_MAX)
                 key = "dep:" + eid
                 if now_secs > m + tol and _RECUR_ALERTED.get(key) != today:
-                    _RECUR_ALERTED[key] = today
-                    _log_decision(
+                    pending.append((key, today, (
                         "anticipation_presence",
                         {"person": name, "entity_id": eid, "usual_out_by": _hhmm(m)},
                         {"predicted": "still home past the usual departure time"},
                         "flag still-home",
                         "recurring departure pattern",
-                    )
+                    )))
                     out.append({
                         "type": "anticipation_presence", "urgency": "low",
                         "message": (f"{name} is usually out by around {_hhmm(m)}, "
@@ -968,7 +1040,6 @@ def predict_presence(hass, now: float = None) -> list:
                         "pattern_key": f"presence_depart:{eid}", "offer": False,
                     })
 
-            # Arrival overdue — usually home by now, not home, did leave today
             ret = _routine_of_pts(list(entry.return_first))
             if ret and _is_away(cur) and entry.pres_depart_day == today \
                     and entry.pres_return_day != today:
@@ -976,14 +1047,13 @@ def predict_presence(hass, now: float = None) -> list:
                 tol = min(max(2 * sd, RECUR_TOL_MIN), RECUR_TOL_MAX)
                 key = "arr:" + eid
                 if now_secs > m + tol and _RECUR_ALERTED.get(key) != today:
-                    _RECUR_ALERTED[key] = today
-                    _log_decision(
+                    pending.append((key, today, (
                         "anticipation_presence",
                         {"person": name, "entity_id": eid, "usual_home_by": _hhmm(m)},
                         {"predicted": "not home yet, past the usual arrival time"},
                         "flag not-back",
                         "recurring arrival pattern",
-                    )
+                    )))
                     out.append({
                         "type": "anticipation_presence", "urgency": "low",
                         "message": (f"{name} is usually home by around {_hhmm(m)}, "
@@ -992,6 +1062,15 @@ def predict_presence(hass, now: float = None) -> list:
                     })
     except Exception as exc:
         _LOGGER.debug("predict_presence error: %s", exc)
+    return out, pending
+
+
+def _predict_presence_sync(hass, now: float = None) -> list:
+    """Compatibility alias for callers that used the pre-refactor helper."""
+    out, pending = _predict_presence_loop(hass, now)
+    for key, today, args in pending:
+        _log_decision(*args)
+        _RECUR_ALERTED[key] = today
     return out
 
 

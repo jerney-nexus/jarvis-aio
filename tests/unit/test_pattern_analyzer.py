@@ -332,7 +332,7 @@ def test_store_person_pattern_no_person_is_noop(analyzer, tmp_path):
 # connection on this (main) thread and run a finder on a genuinely different
 # worker thread, the same handoff analyze() performs against real HA.
 
-def test_run_all_finders_on_real_worker_thread(analyzer, tmp_path):
+def test_run_all_finders_on_real_worker_thread(analyzer, tmp_path, monkeypatch):
     db = tmp_path / "p.db"
     conn = _conn(db)
     for d in range(1, 9):
@@ -342,17 +342,20 @@ def test_run_all_finders_on_real_worker_thread(analyzer, tmp_path):
 
     pa = analyzer.PatternAnalyzer()
     pa._db = str(db)
-    # _connect() is what production code calls before handing the connection
-    # off to the executor job; it must be opened with check_same_thread=False
-    # for the cross-thread use below to be legal.
-    conn = pa._connect()
-    assert conn is not None
+    opened = []
+    original_connect = pa._connect
 
+    def capture_connection():
+        conn = original_connect()
+        opened.append(conn)
+        return conn
+
+    monkeypatch.setattr(pa, "_connect", capture_connection)
     with ThreadPoolExecutor(max_workers=1) as pool:
-        future = pool.submit(pa._run_all_finders, conn, {}, None, None, {})
+        future = pool.submit(pa._run_all_finders, {}, None, None, {})
         patterns = future.result()  # re-raises any sqlite3.ProgrammingError
 
     assert any(p.entity_ids == ["light.porch_test"] for p in patterns)
     # _run_all_finders is documented to close the connection itself.
     with pytest.raises(sqlite3.ProgrammingError):
-        conn.execute("SELECT 1")
+        opened[0].execute("SELECT 1")

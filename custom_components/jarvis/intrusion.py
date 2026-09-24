@@ -17,6 +17,7 @@ panel. Everything here is defensive and never raises to the caller.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import time
@@ -41,6 +42,23 @@ _ACK_WINDOW = 300.0           # an acknowledgement holds the auto-escalation thi
 _last_snapshot: dict = {}     # {path, url, camera, ts} of the most recent capture
 _false_alarms: list = []      # recent {ts, camera, area} for learning
 _last_decision_id: Optional[int] = None  # decision_record row id of the latest intrusion
+_decision_generation = 0
+_pending_decision_generations: set[int] = set()
+_dismissed_decision_generations: set[int] = set()
+
+
+def begin_decision_generation() -> int:
+    """Start a fresh intrusion decision cycle and invalidate stale record IDs."""
+    global _decision_generation, _last_decision_id
+    _decision_generation += 1
+    _last_decision_id = None
+    _pending_decision_generations.add(_decision_generation)
+    return _decision_generation
+
+
+def clear_pending_generation(generation: int) -> None:
+    """Clear a decision generation after its producer exits or is cancelled."""
+    _pending_decision_generations.discard(generation)
 
 
 def acknowledge(reason: str = "") -> dict:
@@ -76,13 +94,11 @@ async def capture_snapshot(hass, camera_entity: str,
         content = getattr(image, "content", None)
         if not content:
             return None
-        os.makedirs(SNAPSHOT_DIR, exist_ok=True)
         ts = int(time.time())
         slug = camera_entity.split(".", 1)[-1]
         fname = f"{tag}_{slug}_{ts}.jpg"
         path = os.path.join(SNAPSHOT_DIR, fname)
-        await hass.async_add_executor_job(_write_bytes, path, content)
-        _prune_old()
+        await hass.async_add_executor_job(_store_snapshot, path, content)
         info = {
             "path": path,
             "url": f"{SNAPSHOT_URL_BASE}/{fname}",
@@ -102,6 +118,12 @@ async def capture_snapshot(hass, camera_entity: str,
 def _write_bytes(path: str, data: bytes) -> None:
     with open(path, "wb") as f:
         f.write(data)
+
+
+def _store_snapshot(path: str, data: bytes) -> None:
+    os.makedirs(SNAPSHOT_DIR, exist_ok=True)
+    _write_bytes(path, data)
+    _prune_old()
 
 
 def _prune_old() -> None:
@@ -128,24 +150,50 @@ def last_snapshot() -> Optional[dict]:
 
 # ── false-alarm call-off ─────────────────────────────────────────────────────
 
-def set_last_decision_id(record_id) -> None:
+def set_last_decision_id(record_id, *, generation: Optional[int] = None) -> Optional[int]:
     """Remember the decision_record row id of the most recent intrusion, so a
     later call-off attaches its outcome to *that* record rather than guessing
-    the most-recent-of-kind (which mis-attributes when intrusions overlap)."""
+    the most-recent-of-kind (which mis-attributes when intrusions overlap).
+
+    A stale task can resume after a dismissal. When that generation was dismissed
+    while its insert was pending, return its record ID so the caller can persist
+    the outcome against the exact row instead of publishing it as active.
+    """
     global _last_decision_id
-    if record_id is not None:
-        try:
-            _last_decision_id = int(record_id)
-        except Exception:
-            pass
+    if record_id is None:
+        if generation is not None:
+            _pending_decision_generations.discard(generation)
+            _dismissed_decision_generations.discard(generation)
+        return None
+    try:
+        decision_id = int(record_id)
+    except Exception:
+        if generation is not None:
+            _pending_decision_generations.discard(generation)
+            _dismissed_decision_generations.discard(generation)
+        return None
+    if generation is not None:
+        _pending_decision_generations.discard(generation)
+        if generation in _dismissed_decision_generations:
+            _dismissed_decision_generations.discard(generation)
+            return decision_id
+        if generation != _decision_generation:
+            return None
+    _last_decision_id = decision_id
+    return None
 
 
-def dismiss_intrusion(reason: str = "") -> dict:
+def _dismiss_intrusion_state(reason: str = "") -> tuple[dict, int | None, bool]:
     """Declare the current/last intrusion a false alarm. Sets a suppression
     window so the SafetyManager stops escalating, and records it. The
     SafetyManager consults is_called_off() and clears its investigation. Never
     raises."""
-    global _called_off_until, _last_decision_id
+    global _called_off_until, _last_decision_id, _decision_generation
+    dismissed_generation = _decision_generation
+    decision_pending = dismissed_generation in _pending_decision_generations
+    if decision_pending:
+        _dismissed_decision_generations.add(dismissed_generation)
+    _decision_generation += 1
     _called_off_until = time.time() + _CALLOFF_COOLDOWN
     rec = {
         "ts": int(time.time()),
@@ -157,22 +205,49 @@ def dismiss_intrusion(reason: str = "") -> dict:
         del _false_alarms[:-50]
     _LOGGER.info("JARVIS: intrusion called off by user%s — suppressing escalation "
                  "for %ds", f" ({reason})" if reason else "", int(_CALLOFF_COOLDOWN))
+    decision_id = _last_decision_id
+    _last_decision_id = None
+    return ({"ok": True, "suppressed_seconds": int(_CALLOFF_COOLDOWN),
+             "recorded": rec}, decision_id, decision_pending)
+
+
+def _persist_dismissal(decision_id: int | None) -> None:
     try:  # Decision Record outcome: a called-off intrusion was a false alarm.
         from . import decision_record
-        if _last_decision_id is not None:
+        if decision_id is not None:
             # Attach the verdict to the exact record for this intrusion.
             if not decision_record.set_outcome(
-                    _last_decision_id, "wrong", "dismiss_intrusion"):
+                    decision_id, "wrong", "dismiss_intrusion"):
                 # Already judged or gone — fall back to most-recent-of-kind.
                 decision_record.set_outcome_recent(
                     "intrusion", "wrong", "dismiss_intrusion", max_age=7200.0)
-            _last_decision_id = None
         else:
             decision_record.set_outcome_recent(
                 "intrusion", "wrong", "dismiss_intrusion", max_age=7200.0)
     except Exception:
         pass
-    return {"ok": True, "suppressed_seconds": int(_CALLOFF_COOLDOWN), "recorded": rec}
+
+
+def dismiss_intrusion(reason: str = "") -> dict:
+    result, decision_id, decision_pending = _dismiss_intrusion_state(reason)
+    if not decision_pending:
+        _persist_dismissal(decision_id)
+    return result
+
+
+async def async_dismiss_intrusion(hass, reason: str = "") -> dict:
+    result, decision_id, decision_pending = _dismiss_intrusion_state(reason)
+    if decision_pending:
+        return result
+    persist_task = hass.async_add_executor_job(
+        _persist_dismissal, decision_id
+    )
+    try:
+        await asyncio.shield(persist_task)
+    except asyncio.CancelledError:
+        await asyncio.shield(persist_task)
+        raise
+    return result
 
 
 def is_called_off() -> bool:

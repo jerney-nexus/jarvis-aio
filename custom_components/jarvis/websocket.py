@@ -12,6 +12,7 @@ Activity log is a separate endpoint (deferred to session 3, needs DB work).
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from typing import Any, Optional
@@ -587,6 +588,27 @@ async def ws_get_panel_data(
         )
 
         configured_providers = await _configured_providers(hass, entry)
+        (
+            announcements_today,
+            doorbell_training,
+            knowledge_stats,
+            suggestions,
+            goals,
+            observer_stats,
+            memory_stats,
+            camera_overrides,
+            camera_names,
+        ) = await asyncio.gather(
+            hass.async_add_executor_job(_get_announcements_today),
+            hass.async_add_executor_job(_get_doorbell_training),
+            hass.async_add_executor_job(_get_knowledge_stats),
+            hass.async_add_executor_job(_get_suggestions),
+            hass.async_add_executor_job(_get_goals),
+            _async_get_observer_stats(hass),
+            hass.async_add_executor_job(_get_memory_stats),
+            hass.async_add_executor_job(_get_camera_overrides),
+            hass.async_add_executor_job(_get_camera_names),
+        )
         broadcast_group = _entry_opt(entry, CONF_BROADCAST_GROUP, "") or ""
         notify_service = _entry_opt(entry, CONF_NOTIFY_SERVICE, "") or ""
         observer_enabled_cfg = bool(_runtime_opt(hass, entry, CONF_OBSERVER_ENABLED, False))
@@ -700,20 +722,20 @@ async def ws_get_panel_data(
             "meta": {
                 "bedrooms":          len(bedroom_areas),
                 "areas_monitored":   len(areas_list),
-                "announcements_today": _get_announcements_today(),
+                "announcements_today": announcements_today,
                 "est_cost":          "—",
                 "uptime":            uptime_str,
             },
             "dominant":       dominant,
             "areas":          areas_list,
             "sleep_reason":   sleep_reason if sleeping else None,
-            "doorbell_training": _get_doorbell_training(),
+            "doorbell_training": doorbell_training,
             "doors":          _get_door_states(hass),
             "lockdown":       _get_lockdown_status(),
             "intrusion":      _get_intrusion_status(),
-            "knowledge":      _get_knowledge_stats(),
-            "suggestions":    _get_suggestions(),
-            "goals":          _get_goals(),
+            "knowledge":      knowledge_stats,
+            "suggestions":    suggestions,
+            "goals":          goals,
             "config": {
                 "announcements_enabled": announcements_on,
                 "sentinel_enabled": sentinel_on,
@@ -781,17 +803,17 @@ async def ws_get_panel_data(
                 "onboarding": _get_onboarding_state(hass, entry, current_notify),
                 "sentinel_rules": _get_sentinel_rules(),
                 "disabled_sentinel_rules": _get_disabled_rules(hass, entry),
-                "observer_stats": _get_observer_stats(),
+                "observer_stats": observer_stats,
                 "lockdown": _get_lockdown_status(),
                 "appliances": _get_appliance_status(),
                 "appliance_profile": _get_runtime_json(hass, entry, "appliance_profile", []),
                 "appliance_announce_unknown": _runtime_opt(hass, entry, "appliance_announce_unknown", False),
-                "memory_stats": _get_memory_stats(),
+                "memory_stats": memory_stats,
                 "satellites": _get_satellites(hass),
                 "cast_devices": _get_cast_devices(hass),
                 "cameras": _get_cameras(hass),
-                "camera_overrides": _get_camera_overrides(),
-                "camera_names": _get_camera_names(),
+                "camera_overrides": camera_overrides,
+                "camera_names": camera_names,
                 "satellite_pairings": _get_runtime_json(hass, entry, "satellite_pairings", {}),
                 "announcement_speakers": _get_runtime_json(hass, entry, "announcement_speakers", []),
                 "floor_plan_rooms": _get_runtime_json(hass, entry, "floor_plan_rooms", {}),
@@ -1198,7 +1220,7 @@ def _get_reasoning_stats() -> dict:
     return out
 
 
-def _get_observer_stats() -> dict:
+def _get_observer_stats(recent=None, reasoning_stats=None) -> dict:
     """Return observer pipeline stats for the tuning dashboard."""
     try:
         from . import observer as obs
@@ -1210,7 +1232,8 @@ def _get_observer_stats() -> dict:
         calls_last_hour = sum(1 for ts in state.classifier_timestamps if ts > now - 3600) if hasattr(state, 'classifier_timestamps') else 0
 
         # Activity stats from DB
-        recent = get_recent_activity(hours=24, limit=500)
+        if recent is None:
+            recent = get_recent_activity(hours=24, limit=500)
         total_events = len(recent)
         spoken = sum(1 for e in recent if e.get("was_spoken"))
         flagged = sum(1 for e in recent if "flagged" in (e.get("message") or ""))
@@ -1245,7 +1268,7 @@ def _get_observer_stats() -> dict:
             "cog_routines": cog_stats.get("routines", 0),
             "cog_presence": cog_stats.get("presence_routines", 0),
             "presence": presence,
-            **_get_reasoning_stats(),
+            **(reasoning_stats or _get_reasoning_stats()),
         }
     except Exception:
         return {"running": False, "calls_last_hour": 0, "rate_limit": 30,
@@ -1255,6 +1278,15 @@ def _get_observer_stats() -> dict:
                 "cog_predictable": 0, "cog_routines": 0, "cog_presence": 0,
                 "presence": [], "learned_patterns": 0, "cloud_calls": 0,
                 "local_decisions": 0, "local_rate": 0, "llm_breaker": "closed"}
+
+
+async def _async_get_observer_stats(hass) -> dict:
+    from .database import get_recent_activity
+    recent, reasoning_stats = await asyncio.gather(
+        hass.async_add_executor_job(get_recent_activity, 24, 500),
+        hass.async_add_executor_job(_get_reasoning_stats),
+    )
+    return _get_observer_stats(recent, reasoning_stats)
 
 
 # ─── Activity log WebSocket command ──────────────────────────────────────────
@@ -2196,21 +2228,25 @@ async def ws_get_calibration(
     """Confidence calibration + interruption-budget health for the dashboard."""
     try:
         from . import decision_record
-        payload = {
-            "calibration": decision_record.calibration(),
-            "interruption_budget": decision_record.interruption_budget(),
-            "stats": decision_record.stats(),
-            "suggestion": decision_record.outcome_rate("suggestion"),
-        }
-        try:
-            from . import pattern_analyzer
-            payload["suggestion_threshold"] = {
-                "base": round(pattern_analyzer.CONFIDENCE_THRESHOLD, 3),
-                "effective": round(pattern_analyzer._effective_threshold(), 3),
-                "learned_delta": round(pattern_analyzer._learned_threshold_delta(), 3),
+        def _calibration_payload():
+            payload = {
+                "calibration": decision_record.calibration(),
+                "interruption_budget": decision_record.interruption_budget(),
+                "stats": decision_record.stats(),
+                "suggestion": decision_record.outcome_rate("suggestion"),
             }
-        except Exception:
-            pass
+            try:
+                from . import pattern_analyzer
+                payload["suggestion_threshold"] = {
+                    "base": round(pattern_analyzer.CONFIDENCE_THRESHOLD, 3),
+                    "effective": round(pattern_analyzer._effective_threshold(), 3),
+                    "learned_delta": round(pattern_analyzer._learned_threshold_delta(), 3),
+                }
+            except Exception:
+                pass
+            return payload
+
+        payload = await hass.async_add_executor_job(_calibration_payload)
         connection.send_result(msg["id"], payload)
     except Exception as exc:
         connection.send_result(msg["id"], {
@@ -2401,13 +2437,21 @@ async def ws_biometrics(
     try:
         from . import biometrics, jarvis_config
         if msg["action"] == "enable":
-            jarvis_config.set("biometrics_enabled", True)
+            await hass.async_add_executor_job(
+                jarvis_config.set, "biometrics_enabled", True
+            )
             jarvis_log("BIO", "biometric context enabled")
         elif msg["action"] == "disable":
-            jarvis_config.set("biometrics_enabled", False)
+            await hass.async_add_executor_job(
+                jarvis_config.set, "biometrics_enabled", False
+            )
             jarvis_log("BIO", "biometric context disabled")
         enabled = bool(jarvis_config.get("biometrics_enabled", False))
-        found = await hass.async_add_executor_job(biometrics.discover, hass)
+        states = (hass.states.async_all("sensor")
+                  + hass.states.async_all("binary_sensor"))
+        found = await hass.async_add_executor_job(
+            biometrics.discover, None, states
+        )
         # flatten discovered entities for the panel
         entities = []
         for kind, ents in found.items():
@@ -2438,6 +2482,7 @@ async def ws_energy(
     picture + advice, or set the agency level (advisory/opt_in/autonomous)."""
     try:
         from . import energy, jarvis_config
+        states = {state.entity_id: state for state in hass.states.async_all()}
         if msg["action"] == "set_agency":
             level = str(msg.get("agency", "") or "").lower()
             if level not in (energy.AGENCY_ADVISORY, energy.AGENCY_OPT_IN,
@@ -2445,12 +2490,14 @@ async def ws_energy(
                 connection.send_error(msg["id"], "bad_agency",
                                       f"unknown agency '{level}'")
                 return
-            jarvis_config.set("energy_agency", level)
+            await hass.async_add_executor_job(
+                jarvis_config.set, "energy_agency", level
+            )
             jarvis_log("ENERGY", f"agency → {level}")
-            res = await hass.async_add_executor_job(energy.power_status, hass)
+            res = await hass.async_add_executor_job(energy.power_status, None, states)
             connection.send_result(msg["id"], res)
         else:
-            res = await hass.async_add_executor_job(energy.power_status, hass)
+            res = await hass.async_add_executor_job(energy.power_status, None, states)
             connection.send_result(msg["id"], res)
     except Exception as exc:
         _LOGGER.exception("ws_energy failed: %s", exc)
@@ -2540,7 +2587,9 @@ async def ws_intrusion(
     try:
         from . import intrusion
         if msg["action"] == "dismiss":
-            res = intrusion.dismiss_intrusion(msg.get("reason", "panel"))
+            res = await intrusion.async_dismiss_intrusion(
+                hass, msg.get("reason", "panel")
+            )
             try:
                 from . import cognitive_core
                 core = getattr(cognitive_core, "_CORE", None)
@@ -2637,8 +2686,10 @@ async def ws_semantic_search(
     try:
         from . import embeddings, jarvis_config
         if action == "enable":
-            jarvis_config.set("semantic_search", True)
-            embeddings.init_store()
+            await hass.async_add_executor_job(
+                jarvis_config.set, "semantic_search", True
+            )
+            await hass.async_add_executor_job(embeddings.init_store)
             res = await embeddings.probe(hass)
             res["enabled"] = True
             if res.get("ok"):
@@ -2650,7 +2701,9 @@ async def ws_semantic_search(
                                     f"ready: {res.get('error')}")
             connection.send_result(msg["id"], res)
         elif action == "disable":
-            jarvis_config.set("semantic_search", False)
+            await hass.async_add_executor_job(
+                jarvis_config.set, "semantic_search", False
+            )
             jarvis_log("AGENT", "semantic search disabled — keyword (FTS) active")
             connection.send_result(msg["id"], {"enabled": False, "ok": True})
         elif action == "test":
@@ -2965,8 +3018,9 @@ async def ws_goal_action(
                 connection.send_error(msg["id"], "create_failed", res["error"])
                 return
             jarvis_log("LEARN", f"Goal created from panel: {title or outcome[:50]}")
+            current_goals = await hass.async_add_executor_job(_get_goals)
             connection.send_result(msg["id"], {"ok": True, "goal": res,
-                                               "goals": _get_goals()})
+                                               "goals": current_goals})
             return
 
         # cancel / delete both need a goal_id
@@ -2982,7 +3036,8 @@ async def ws_goal_action(
         else:  # cancel
             ok = await hass.async_add_executor_job(goals.cancel, gid)
             jarvis_log("LEARN", f"Goal #{gid} cancelled from panel (ok={ok})")
-        connection.send_result(msg["id"], {"ok": bool(ok), "goals": _get_goals()})
+        current_goals = await hass.async_add_executor_job(_get_goals)
+        connection.send_result(msg["id"], {"ok": bool(ok), "goals": current_goals})
     except Exception as exc:
         _LOGGER.exception("ws_goal_action failed: %s", exc)
         connection.send_error(msg["id"], "goal_action_failed", str(exc))

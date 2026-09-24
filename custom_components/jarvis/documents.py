@@ -27,10 +27,12 @@ to the caller.
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import os
 import re
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -53,6 +55,7 @@ _chroma_ok = False
 _collection = None
 _fts_ok = False
 _initialized = False
+_INGEST_LOCK = threading.RLock()
 
 
 # ── init (mirrors memory.py) ─────────────────────────────────────────────────
@@ -247,51 +250,52 @@ def ingest_file(path: str) -> dict:
     {"source", "chunks", "ok", "chunk_texts"?, "error"?}. Never raises.
     chunk_texts is included on success so an async caller can also embed them
     for semantic search (v6.57.0)."""
-    _ensure_init()
-    source = os.path.basename(path)
-    text, err = extract_text(path)
-    if err:
-        return {"source": source, "chunks": 0, "ok": False, "error": err}
-    chunks = chunk_text(text)
-    if not chunks:
-        return {"source": source, "chunks": 0, "ok": False,
-                "error": "no extractable text (scanned image PDF?)"}
-
-    _forget_source(source)
-    ingested = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
-
-    if _chroma_ok and _collection is not None:
-        try:
-            _collection.add(
-                documents=chunks,
-                metadatas=[{"source": source, "chunk": i, "ingested": ingested}
-                           for i in range(len(chunks))],
-                ids=[_doc_id(source, i, c) for i, c in enumerate(chunks)],
-            )
-            return {"source": source, "chunks": len(chunks), "ok": True,
-                    "chunk_texts": chunks, "ingested": ingested}
-        except Exception as exc:
-            _LOGGER.debug("doc chroma add failed: %s", exc)
-
-    if _fts_ok:
-        try:
-            import sqlite3
-            conn = sqlite3.connect(_DB_PATH)
-            conn.executemany(
-                "INSERT INTO document_fts (content, source, chunk_id, ingested) "
-                "VALUES (?, ?, ?, ?)",
-                [(c, source, str(i), ingested) for i, c in enumerate(chunks)],
-            )
-            conn.commit()
-            conn.close()
-            return {"source": source, "chunks": len(chunks), "ok": True,
-                    "chunk_texts": chunks, "ingested": ingested}
-        except Exception as exc:
+    with _INGEST_LOCK:
+        _ensure_init()
+        source = os.path.basename(path)
+        text, err = extract_text(path)
+        if err:
+            return {"source": source, "chunks": 0, "ok": False, "error": err}
+        chunks = chunk_text(text)
+        if not chunks:
             return {"source": source, "chunks": 0, "ok": False,
-                    "error": f"fts store failed: {exc}"}
+                    "error": "no extractable text (scanned image PDF?)"}
 
-    return {"source": source, "chunks": 0, "ok": False,
-            "error": "no vector or FTS store available"}
+        _forget_source(source)
+        ingested = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+
+        if _chroma_ok and _collection is not None:
+            try:
+                _collection.add(
+                    documents=chunks,
+                    metadatas=[{"source": source, "chunk": i, "ingested": ingested}
+                               for i in range(len(chunks))],
+                    ids=[_doc_id(source, i, c) for i, c in enumerate(chunks)],
+                )
+                return {"source": source, "chunks": len(chunks), "ok": True,
+                        "chunk_texts": chunks, "ingested": ingested}
+            except Exception as exc:
+                _LOGGER.debug("doc chroma add failed: %s", exc)
+
+        if _fts_ok:
+            try:
+                import sqlite3
+                conn = sqlite3.connect(_DB_PATH)
+                conn.executemany(
+                    "INSERT INTO document_fts (content, source, chunk_id, ingested) "
+                    "VALUES (?, ?, ?, ?)",
+                    [(c, source, str(i), ingested) for i, c in enumerate(chunks)],
+                )
+                conn.commit()
+                conn.close()
+                return {"source": source, "chunks": len(chunks), "ok": True,
+                        "chunk_texts": chunks, "ingested": ingested}
+            except Exception as exc:
+                return {"source": source, "chunks": 0, "ok": False,
+                        "error": f"fts store failed: {exc}"}
+
+        return {"source": source, "chunks": 0, "ok": False,
+                "error": "no vector or FTS store available"}
 
 
 async def ingest_directory_async(hass, directory: str = DOCS_DIR) -> dict:
@@ -300,12 +304,12 @@ async def ingest_directory_async(hass, directory: str = DOCS_DIR) -> dict:
     embeddings on top when available. Falls back silently to keyword-only if
     Ollama is unreachable."""
     from . import embeddings
-    base = ingest_directory(directory)          # FTS ingest (sync)
+    base = await hass.async_add_executor_job(ingest_directory, directory)
     if not base.get("ok") or not embeddings.is_enabled():
         base["semantic"] = False
         return base
 
-    embeddings.init_store()
+    await hass.async_add_executor_job(embeddings.init_store)
     embedded_files = 0
     embedded_chunks = 0
     semantic_error = None
@@ -319,7 +323,7 @@ async def ingest_directory_async(hass, directory: str = DOCS_DIR) -> dict:
             semantic_error = ("Ollama embeddings unavailable — pull the embed "
                               "model and check the host; keyword search is active")
             break
-        embeddings.forget_source(source)
+        await hass.async_add_executor_job(embeddings.forget_source, source)
         stored = await hass.async_add_executor_job(
             embeddings.store_vectors, source, chunks, vecs,
             res.get("ingested", ""))
@@ -406,10 +410,12 @@ async def save_and_ingest_upload(hass, filename: str, b64_content: str) -> dict:
     try:
         from . import embeddings
         if embeddings.is_enabled() and res.get("chunk_texts"):
-            embeddings.init_store()
+            await hass.async_add_executor_job(embeddings.init_store)
             vecs = await embeddings.embed_texts(hass, res["chunk_texts"])
             if vecs is not None:
-                embeddings.forget_source(saved["filename"])
+                await hass.async_add_executor_job(
+                    embeddings.forget_source, saved["filename"]
+                )
                 n = await hass.async_add_executor_job(
                     embeddings.store_vectors, saved["filename"],
                     res["chunk_texts"], vecs, res.get("ingested", ""))
@@ -442,6 +448,65 @@ def _cfg(key: str, default):
         return default
 
 
+def _watch_seen() -> dict[str, float]:
+    import sqlite3
+    try:
+        conn = sqlite3.connect(_DB_PATH)
+        conn.execute("CREATE TABLE IF NOT EXISTS document_watch_seen ("
+                     "path TEXT PRIMARY KEY, mtime REAL, ingested TEXT)")
+        conn.commit()
+        seen = {row[0]: row[1] for row in
+                conn.execute("SELECT path, mtime FROM document_watch_seen")}
+        conn.close()
+        return seen
+    except Exception:
+        return {}
+
+
+def _watch_candidates(folders: list[str], seen: dict[str, float]) -> list[tuple[str, float]]:
+    candidates = []
+    for folder in folders:
+        try:
+            directory = Path(folder)
+            if not directory.is_dir():
+                continue
+            for path in sorted(directory.iterdir()):
+                try:
+                    if not path.is_file() or path.suffix.lower() not in _SUPPORTED:
+                        continue
+                    stat = path.stat()
+                except OSError:
+                    continue
+                if stat.st_size > _MAX_FILE_MB * 1_000_000:
+                    continue
+                key = str(path)
+                if key in seen and abs(seen[key] - stat.st_mtime) < 1.0:
+                    continue
+                candidates.append((key, stat.st_mtime))
+        except Exception as exc:
+            _LOGGER.debug("watch scan of %s failed: %s", folder, exc)
+    return candidates
+
+
+def _mark_watch_seen(path: str, mtime: float) -> None:
+    import sqlite3
+    try:
+        conn = sqlite3.connect(_DB_PATH)
+        conn.execute("INSERT OR REPLACE INTO document_watch_seen "
+                     "(path, mtime, ingested) VALUES (?, ?, ?)",
+                     (path, mtime, datetime.now(timezone.utc).replace(tzinfo=None).isoformat()))
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
+
+async def _run_blocking(hass, func, *args):
+    if hass is not None:
+        return await hass.async_add_executor_job(func, *args)
+    return await asyncio.to_thread(func, *args)
+
+
 async def auto_ingest_new(hass) -> dict:
     """Ingest only NEW or CHANGED files in DOCS_DIR (v6.79.0).
 
@@ -452,48 +517,21 @@ async def auto_ingest_new(hass) -> dict:
     so dropping a manual into /config/jarvis/documents gets picked up
     automatically on the next scheduled scan, without re-embedding everything.
     Never raises."""
-    import sqlite3
-    docs = Path(DOCS_DIR)
-    if not docs.is_dir():
+    docs_exists = await _run_blocking(hass, Path(DOCS_DIR).is_dir)
+    seen = await _run_blocking(hass, _watch_seen)
+    candidates = await _run_blocking(hass, _watch_candidates, [DOCS_DIR], seen)
+    if not docs_exists and not candidates:
         return {"ok": True, "new_files": 0, "note": "docs dir absent"}
 
-    try:
-        conn = sqlite3.connect(_DB_PATH)
-        conn.execute("CREATE TABLE IF NOT EXISTS document_watch_seen ("
-                     "path TEXT PRIMARY KEY, mtime REAL, ingested TEXT)")
-        conn.commit()
-        seen = {r[0]: r[1] for r in
-                conn.execute("SELECT path, mtime FROM document_watch_seen")}
-        conn.close()
-    except Exception:
-        seen = {}
-
     results = []
-    for f in sorted(docs.iterdir()):
+    for key, mtime in candidates:
         try:
-            if not f.is_file() or f.suffix.lower() not in _SUPPORTED:
-                continue
-            st = f.stat()
-            if st.st_size > _MAX_FILE_MB * 1_000_000:
-                continue
-            key = str(f)
-            mtime = st.st_mtime
-            if key in seen and abs(seen[key] - mtime) < 1.0:
-                continue                       # already ingested this version
             res = await save_and_ingest_upload_from_path(hass, key)
-            results.append({"source": f.name, **res})
+            results.append({"source": os.path.basename(key), **res})
             if res.get("ok"):
-                try:
-                    conn = sqlite3.connect(_DB_PATH)
-                    conn.execute("INSERT OR REPLACE INTO document_watch_seen "
-                                 "(path, mtime, ingested) VALUES (?, ?, ?)",
-                                 (key, mtime, datetime.now(timezone.utc).replace(tzinfo=None).isoformat()))
-                    conn.commit()
-                    conn.close()
-                except Exception:
-                    pass
+                await _run_blocking(hass, _mark_watch_seen, key, mtime)
         except Exception as exc:
-            _LOGGER.debug("auto-ingest of %s failed: %s", f, exc)
+            _LOGGER.debug("auto-ingest of %s failed: %s", key, exc)
 
     ingested = sum(1 for r in results if r.get("ok"))
     return {"ok": True, "new_files": ingested, "files": results}
@@ -508,55 +546,21 @@ async def scan_watch_folders(hass) -> dict:
         return {"ok": True, "watched": 0, "new_files": 0,
                 "note": "no watch folders configured"}
 
-    import sqlite3
-    # remember ingested watch-file paths+mtimes in a tiny table
-    try:
-        conn = sqlite3.connect(_DB_PATH)
-        conn.execute("CREATE TABLE IF NOT EXISTS document_watch_seen ("
-                     "path TEXT PRIMARY KEY, mtime REAL, ingested TEXT)")
-        conn.commit()
-        seen = {r[0]: r[1] for r in
-                conn.execute("SELECT path, mtime FROM document_watch_seen")}
-        conn.close()
-    except Exception:
-        seen = {}
+    seen = await _run_blocking(hass, _watch_seen)
+    candidates = await _run_blocking(hass, _watch_candidates, folders, seen)
 
     new_results = []
-    for folder in folders:
+    for key, mtime in candidates:
         try:
-            d = Path(folder)
-            if not d.is_dir():
+            copied = await _run_blocking(hass, _copy_into_docs, key)
+            if not copied.get("ok"):
                 continue
-            for f in sorted(d.iterdir()):
-                if not f.is_file() or f.suffix.lower() not in _SUPPORTED:
-                    continue
-                try:
-                    mtime = f.stat().st_mtime
-                    if f.stat().st_size > _MAX_FILE_MB * 1_000_000:
-                        continue
-                except Exception:
-                    continue
-                key = str(f)
-                if key in seen and abs(seen[key] - mtime) < 1.0:
-                    continue          # already ingested this version
-                # ingest by copying into DOCS_DIR (keeps the library in one place)
-                copied = await hass.async_add_executor_job(
-                    _copy_into_docs, key)
-                if not copied.get("ok"):
-                    continue
-                res = await save_and_ingest_upload_from_path(hass, copied["path"])
-                new_results.append({"source": f.name, **res})
-                try:
-                    conn = sqlite3.connect(_DB_PATH)
-                    conn.execute("INSERT OR REPLACE INTO document_watch_seen "
-                                 "(path, mtime, ingested) VALUES (?, ?, ?)",
-                                 (key, mtime, datetime.now(timezone.utc).replace(tzinfo=None).isoformat()))
-                    conn.commit()
-                    conn.close()
-                except Exception:
-                    pass
+            res = await save_and_ingest_upload_from_path(hass, copied["path"])
+            new_results.append({"source": os.path.basename(key), **res})
+            if res.get("ok"):
+                await _run_blocking(hass, _mark_watch_seen, key, mtime)
         except Exception as exc:
-            _LOGGER.debug("watch scan of %s failed: %s", folder, exc)
+            _LOGGER.debug("watch scan of %s failed: %s", key, exc)
 
     ingested = sum(1 for r in new_results if r.get("ok"))
     return {"ok": True, "watched": len(folders), "new_files": ingested,
@@ -590,10 +594,12 @@ async def save_and_ingest_upload_from_path(hass, path: str) -> dict:
     try:
         from . import embeddings
         if embeddings.is_enabled() and res.get("chunk_texts"):
-            embeddings.init_store()
+            await hass.async_add_executor_job(embeddings.init_store)
             vecs = await embeddings.embed_texts(hass, res["chunk_texts"])
             if vecs is not None:
-                embeddings.forget_source(out["filename"])
+                await hass.async_add_executor_job(
+                    embeddings.forget_source, out["filename"]
+                )
                 await hass.async_add_executor_job(
                     embeddings.store_vectors, out["filename"],
                     res["chunk_texts"], vecs, res.get("ingested", ""))
@@ -616,7 +622,7 @@ async def search_documents_async(hass, query: str, k: int = 4) -> list[dict]:
                     h["engine"] = "semantic"
                 return hits
     # fall back to keyword
-    hits = search_documents(query, k)
+    hits = await hass.async_add_executor_job(search_documents, query, k)
     for h in hits:
         h["engine"] = "keyword"
     return hits
@@ -625,34 +631,35 @@ async def search_documents_async(hass, query: str, k: int = 4) -> list[dict]:
 def ingest_directory(directory: str = DOCS_DIR) -> dict:
     """Ingest every supported file in the documents directory. Returns a
     summary with per-file results. Creates the directory if missing."""
-    _ensure_init()
-    d = Path(directory)
-    try:
-        d.mkdir(parents=True, exist_ok=True)
-    except Exception as exc:
-        return {"ok": False, "error": f"cannot access {directory}: {exc}",
-                "files": [], "total_chunks": 0}
-
-    results = []
-    total_chunks = 0
-    for f in sorted(d.iterdir()):
-        if not f.is_file() or f.suffix.lower() not in _SUPPORTED:
-            continue
+    with _INGEST_LOCK:
+        _ensure_init()
+        d = Path(directory)
         try:
-            if f.stat().st_size > _MAX_FILE_MB * 1_000_000:
-                results.append({"source": f.name, "chunks": 0, "ok": False,
-                                "error": f"larger than {_MAX_FILE_MB}MB — skipped"})
-                continue
-        except Exception:
-            pass
-        res = ingest_file(str(f))
-        results.append(res)
-        total_chunks += res.get("chunks", 0)
+            d.mkdir(parents=True, exist_ok=True)
+        except Exception as exc:
+            return {"ok": False, "error": f"cannot access {directory}: {exc}",
+                    "files": [], "total_chunks": 0}
 
-    ok_files = sum(1 for r in results if r.get("ok"))
-    return {"ok": True, "files": results, "files_ingested": ok_files,
-            "files_seen": len(results), "total_chunks": total_chunks,
-            "directory": directory}
+        results = []
+        total_chunks = 0
+        for f in sorted(d.iterdir()):
+            if not f.is_file() or f.suffix.lower() not in _SUPPORTED:
+                continue
+            try:
+                if f.stat().st_size > _MAX_FILE_MB * 1_000_000:
+                    results.append({"source": f.name, "chunks": 0, "ok": False,
+                                    "error": f"larger than {_MAX_FILE_MB}MB — skipped"})
+                    continue
+            except Exception:
+                pass
+            res = ingest_file(str(f))
+            results.append(res)
+            total_chunks += res.get("chunks", 0)
+
+        ok_files = sum(1 for r in results if r.get("ok"))
+        return {"ok": True, "files": results, "files_ingested": ok_files,
+                "files_seen": len(results), "total_chunks": total_chunks,
+                "directory": directory}
 
 
 # ── retrieval ────────────────────────────────────────────────────────────────

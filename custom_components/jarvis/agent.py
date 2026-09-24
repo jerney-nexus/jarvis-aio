@@ -1227,7 +1227,7 @@ async def _exec_search_entities(hass: HomeAssistant, args: dict) -> str:
     domain_filter = args.get("domain")
 
     # Check learned aliases first
-    learned = _load_learned()
+    learned = await hass.async_add_executor_job(_load_learned)
     aliases = learned.get("alias", {})
     if query in aliases:
         resolved_id = aliases[query]
@@ -1696,7 +1696,8 @@ async def _exec_manage_autonomy(hass: HomeAssistant, args: dict) -> str:
             pkey = args.get("pattern_key", "")
             if not pkey:
                 return json.dumps({"error": "pattern_key required for revoke"})
-            return json.dumps(cognitive_core.revoke_autonomy(pkey))
+            result = await cognitive_core.async_revoke_autonomy(pkey)
+            return json.dumps(result)
         # default: list
         status = cognitive_core.status()
         return json.dumps({"grants": status.get("autonomy_grants", [])})
@@ -1862,18 +1863,22 @@ async def _verify_control(hass: HomeAssistant, entity_id: str, action: str,
         ok = _state_ok(hass, entity_id, expected)
         from . import database
         if ok:
-            database.save_activity(
-                entity_id=entity_id, category="verify", urgency="low",
-                message=f"{entity_id} needed a second attempt to {action} — "
-                        f"succeeded on retry.", source="agent")
+            await hass.async_add_executor_job(
+                lambda: database.save_activity(
+                    entity_id=entity_id, category="verify", urgency="low",
+                    message=f"{entity_id} needed a second attempt to {action} — "
+                            f"succeeded on retry.", source="agent")
+            )
         else:
             st = hass.states.get(entity_id)
-            database.save_activity(
-                entity_id=entity_id, category="verify", urgency="medium",
-                message=f"{entity_id} did not respond to {action} "
-                        f"(state: {st.state if st else 'unknown'}) even after a "
-                        f"retry — it may be jammed, obstructed, or offline.",
-                source="agent")
+            await hass.async_add_executor_job(
+                lambda: database.save_activity(
+                    entity_id=entity_id, category="verify", urgency="medium",
+                    message=f"{entity_id} did not respond to {action} "
+                            f"(state: {st.state if st else 'unknown'}) even after a "
+                            f"retry — it may be jammed, obstructed, or offline.",
+                    source="agent")
+            )
     except Exception as exc:
         _LOGGER.debug("verify_control failed for %s: %s", entity_id, exc)
 
@@ -2017,7 +2022,11 @@ async def _exec_wellbeing_context(hass: HomeAssistant, args: dict) -> str:
     """Read non-medical wellbeing context from a wearable (v6.63.0)."""
     try:
         from . import biometrics
-        res = await hass.async_add_executor_job(biometrics.wellbeing_context, hass)
+        states = (hass.states.async_all("sensor")
+                  + hass.states.async_all("binary_sensor"))
+        res = await hass.async_add_executor_job(
+            biometrics.wellbeing_context, None, states
+        )
         return json.dumps(res)
     except Exception as exc:
         return json.dumps({"error": str(exc)})
@@ -2027,7 +2036,8 @@ async def _exec_energy_status(hass: HomeAssistant, args: dict) -> str:
     """Report whole-home power draw + energy advice (v6.62.0)."""
     try:
         from . import energy
-        res = await hass.async_add_executor_job(energy.power_status, hass)
+        states = {state.entity_id: state for state in hass.states.async_all()}
+        res = await hass.async_add_executor_job(energy.power_status, None, states)
         return json.dumps(res)
     except Exception as exc:
         return json.dumps({"error": str(exc)})
@@ -2191,7 +2201,9 @@ async def _exec_dismiss_intrusion(hass: HomeAssistant, args: dict) -> str:
     """Call off an active intrusion as a false alarm (v6.68.0)."""
     try:
         from . import intrusion, cognitive_core
-        res = intrusion.dismiss_intrusion(args.get("reason", ""))
+        res = await intrusion.async_dismiss_intrusion(
+            hass, args.get("reason", "")
+        )
         # Also clear any live investigation in the SafetyManager immediately.
         try:
             core = getattr(cognitive_core, "_CORE", None)
