@@ -1,3 +1,17 @@
+## [7.99.9] — current-date awareness, cleaner camera output, and more languages
+
+Follow-ups from the community language discussion (#55), plus two fixes.
+
+**JARVIS knows today's date now (fixes stale web search).** The situational context fed to the agent carried only the weekday and clock, never the year — so for anything time-sensitive the model fell back to its training-cutoff date, and a web search for current events (an election result, "the latest…") could land on old 2024-era hits. The full local date is now in context, read from your Home Assistant timezone, so current-events questions are answered against *today*.
+
+**Cleaner camera descriptions, in one language.** Multi-frame camera analysis used to leak its internal tile labels — "Frame 1", "Frames" — into the description, in English even on a non-English home. JARVIS now describes the scene naturally and never mentions the capture format, so localized descriptions read as a single language.
+
+**Safety & security alerts speak more languages.** The deterministic freeze, intrusion and lockdown notifications — generated without the LLM so they stay reliable — now include **Russian, Ukrainian and Polish** alongside the existing seven, so those households stop receiving safety alerts in English.
+
+**Easier to help translate.** A new `scripts/i18n_coverage.py` reports how complete each language is across both the panel UI and the notifications and lists which languages still need work; a rewritten translation guide makes contributing possible without touching code; and a Translation issue template gives new-language offers a home. The panel UI is fully translated across all 22 languages, and the safety notifications now cover 10 — the rest are very welcome as community contributions.
+
+Thanks to @televisorsaal-ai for the language feedback in #55.
+
 ## [7.99.8] — briefing, area-targeting, and startup-noise fixes
 
 Three fixes.
