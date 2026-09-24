@@ -26,6 +26,19 @@ def set_observer(monkeypatch):
     return _set
 
 
+def test_time_includes_full_date(sit, fake_hass):
+    # The situational time line must carry the full date — weekday, month, day
+    # and YEAR — so the agent (and web search) knows the current date rather than
+    # defaulting to the model's training cutoff. Regression for discussion #55.
+    import datetime as _dt
+    out = sit._time(fake_hass)
+    now = _dt.datetime.now()
+    assert out.startswith("Time:")
+    assert str(now.year) in out                 # the year is present
+    assert now.strftime("%A") in out            # weekday
+    assert now.strftime("%B") in out            # month name
+
+
 def test_weather_reads_entity(sit, fake_hass, monkeypatch):
     class _St:
         state = "sunny"

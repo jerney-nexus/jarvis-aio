@@ -1163,7 +1163,7 @@ async def async_analyze_camera(
                 if name and name.lower() != "unknown" and confidence >= 60 and age < 60:
                     recognition_hint = (
                         f"\n\nIMPORTANT: Face recognition has identified the person "
-                        f"in frame as '{name}' (confidence {confidence:.0f}%). "
+                        f"on camera as '{name}' (confidence {confidence:.0f}%). "
                         f"Refer to them by name in your description."
                     )
         except Exception:
@@ -1185,9 +1185,12 @@ async def async_analyze_camera(
                else f"{len(images_b64)} sequential frames in chronological order")
         task = (
             f"You are analysing {seq} from the camera feed '{camera_name}'.{cov_hint} Captured "
-            f"about {clip_interval:.0f}s apart. Describe what HAPPENS across the frames "
+            f"about {clip_interval:.0f}s apart. Describe what HAPPENS over the sequence "
             f"— motion, who or what appears or leaves, packages set down or removed, "
             f"direction of travel. If the scene is static, say so in a few words. "
+            f"Describe the scene naturally: do NOT mention frames, tiles, a contact "
+            f"sheet, or the tile labels ('Frame 1', 'Frame 2', …) — they are only an "
+            f"internal capture format, not part of the scene. "
             f"Under 90 words.{ground_hint}{_LOWLIGHT_HINT}{recognition_hint}"
         )
     else:

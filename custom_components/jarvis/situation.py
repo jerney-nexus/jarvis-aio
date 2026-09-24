@@ -20,8 +20,19 @@ _LOGGER = logging.getLogger(__name__)
 
 def _time(hass) -> str:
     try:
-        dt = datetime.now()
-        return "Time: " + dt.strftime("%A") + " " + dt.strftime("%I:%M %p").lstrip("0")
+        # Home Assistant's configured local time when available, so the date and
+        # clock match the household's timezone rather than the server process's.
+        try:
+            from homeassistant.util import dt as dt_util
+            dt = dt_util.now()
+        except Exception:
+            dt = datetime.now()
+        # Include the full date (weekday, month, day, YEAR), not just the weekday
+        # and clock: without the year the model falls back to its training-cutoff
+        # date and mis-handles time-sensitive questions (e.g. web searches for
+        # current events land on stale results). See discussion #55.
+        clock = dt.strftime("%I:%M %p").lstrip("0")
+        return f"Time: {dt.strftime('%A, %B')} {dt.day}, {dt.year} · {clock}"
     except Exception:
         return ""
 
