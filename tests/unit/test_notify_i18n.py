@@ -46,11 +46,38 @@ def test_intrusion_ctx_fragments(i18n):
     assert i18n.message("intrusion_ctx_armed", "es") == " (alarma armada)"
 
 
+def test_russian_freeze_is_russian_and_filled(i18n):
+    msg = i18n.message("freeze_critical", "ru", honorific="сэр",
+                       reading="-18°C", set_to="13°C")
+    assert "температура" in msg and "-18°C" in msg and "13°C" in msg
+
+
+def test_russian_title_and_conjunction(i18n):
+    assert i18n.title("intrusion_confirmed", "ru") == "JARVIS — ВТОРЖЕНИЕ"
+    assert i18n.join_names(["A", "B"], "ru") == "A и B"
+
+
 def test_all_message_keys_cover_all_title_languages(i18n):
-    # every message/title present in English must at least exist; spot-check the
-    # 7-language coverage is symmetric so nothing silently misses a language
-    langs = {"en", "fr", "de", "es", "it", "nl", "pt"}
+    # every message/title present in English must at least exist; the coverage
+    # must be symmetric so nothing silently misses a language and falls back to
+    # English mid-notification (the "mixed language" bug — discussion #55).
+    langs = {"en", "fr", "de", "es", "it", "nl", "pt", "ru"}
     for key, table in i18n.MESSAGES.items():
         assert set(table.keys()) == langs, f"{key} missing languages"
     for key, table in i18n.TITLES.items():
         assert set(table.keys()) == langs, f"title {key} missing languages"
+
+
+def test_placeholders_match_english_in_every_language(i18n):
+    # A translated template with a different placeholder set than English would
+    # raise KeyError at format() time (masked by the English fallback) or drop a
+    # value. Enforce that every language's template carries the same {fields}.
+    import re
+
+    def phs(s):
+        return set(re.findall(r"{(\w+)}", s))
+
+    for key, table in i18n.MESSAGES.items():
+        expected = phs(table["en"])
+        for lang, tmpl in table.items():
+            assert phs(tmpl) == expected, f"{key}/{lang} placeholder mismatch"

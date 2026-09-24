@@ -7,10 +7,15 @@ replies). English is the base and the fallback for any language or key not
 present here. Entity/area names and the user's honorific are passed through as
 parameters and never translated.
 
-Scope: the self-contained safety messages. The composed lockdown variants that
-stitch together device lists ("I locked X and closed Y, but Z is open") are not
-here yet — localizing generated, grammar-sensitive device phrases is a separate
-pass, and a half-translated sentence reads worse than a clean English one.
+Scope: the self-contained safety messages AND the composed lockdown variants
+that stitch together device lists ("I locked X and closed Y, but Z is open") —
+built from per-language verb phrases, a localized list join (``join_names``) and
+per-language wrappers so the grammar stays natural.
+
+Coverage rule: every language must appear in EVERY table below. A language that
+covers only some keys would emit English mid-notification (a "mixed language"
+message), so a test enforces full, symmetric coverage. Adding a language means
+adding it to all tables and to ``_AND``.
 """
 from __future__ import annotations
 
@@ -26,43 +31,43 @@ TITLES: dict[str, dict[str, str]] = {
         "en": "JARVIS — Freeze Warning", "fr": "JARVIS — Alerte de gel",
         "de": "JARVIS — Frostwarnung", "es": "JARVIS — Alerta de heladas",
         "it": "JARVIS — Allerta gelo", "nl": "JARVIS — Vorstwaarschuwing",
-        "pt": "JARVIS — Alerta de gelo",
+        "pt": "JARVIS — Alerta de gelo", "ru": "JARVIS — Предупреждение о заморозках",
     },
     "freeze_warning": {
         "en": "JARVIS — Temperature Alert", "fr": "JARVIS — Alerte température",
         "de": "JARVIS — Temperaturwarnung", "es": "JARVIS — Alerta de temperatura",
         "it": "JARVIS — Allerta temperatura", "nl": "JARVIS — Temperatuuralarm",
-        "pt": "JARVIS — Alerta de temperatura",
+        "pt": "JARVIS — Alerta de temperatura", "ru": "JARVIS — Температурное оповещение",
     },
     "intrusion_investigating": {
         "en": "JARVIS — Security Alert", "fr": "JARVIS — Alerte de sécurité",
         "de": "JARVIS — Sicherheitswarnung", "es": "JARVIS — Alerta de seguridad",
         "it": "JARVIS — Allerta sicurezza", "nl": "JARVIS — Beveiligingsalarm",
-        "pt": "JARVIS — Alerta de segurança",
+        "pt": "JARVIS — Alerta de segurança", "ru": "JARVIS — Сигнал безопасности",
     },
     "intrusion_confirmed": {
         "en": "JARVIS — INTRUSION", "fr": "JARVIS — INTRUSION",
         "de": "JARVIS — EINBRUCH", "es": "JARVIS — INTRUSIÓN",
         "it": "JARVIS — INTRUSIONE", "nl": "JARVIS — INBRAAK",
-        "pt": "JARVIS — INTRUSÃO",
+        "pt": "JARVIS — INTRUSÃO", "ru": "JARVIS — ВТОРЖЕНИЕ",
     },
     "intrusion_away": {
         "en": "JARVIS — Security Alert", "fr": "JARVIS — Alerte de sécurité",
         "de": "JARVIS — Sicherheitswarnung", "es": "JARVIS — Alerta de seguridad",
         "it": "JARVIS — Allerta sicurezza", "nl": "JARVIS — Beveiligingsalarm",
-        "pt": "JARVIS — Alerta de segurança",
+        "pt": "JARVIS — Alerta de segurança", "ru": "JARVIS — Сигнал безопасности",
     },
     "intrusion_sleep": {
         "en": "JARVIS — Motion Detected", "fr": "JARVIS — Mouvement détecté",
         "de": "JARVIS — Bewegung erkannt", "es": "JARVIS — Movimiento detectado",
         "it": "JARVIS — Movimento rilevato", "nl": "JARVIS — Beweging gedetecteerd",
-        "pt": "JARVIS — Movimento detetado",
+        "pt": "JARVIS — Movimento detetado", "ru": "JARVIS — Обнаружено движение",
     },
     "lockdown": {
         "en": "JARVIS — House Secured", "fr": "JARVIS — Maison sécurisée",
         "de": "JARVIS — Haus gesichert", "es": "JARVIS — Casa asegurada",
         "it": "JARVIS — Casa protetta", "nl": "JARVIS — Huis beveiligd",
-        "pt": "JARVIS — Casa protegida",
+        "pt": "JARVIS — Casa protegida", "ru": "JARVIS — Дом под охраной",
     },
 }
 
@@ -76,6 +81,7 @@ MESSAGES: dict[str, dict[str, str]] = {
         "it": "{honorific}, la temperatura esterna è scesa a {reading}. Il rischio di congelamento delle tubature è elevato. Consiglio di aprire gli sportelli dei mobiletti lungo le pareti esterne e di impostare il riscaldamento ad almeno {set_to}.",
         "nl": "{honorific}, de buitentemperatuur is gedaald tot {reading}. Er is een hoog risico op bevriezing van leidingen. Ik raad aan om kastdeuren bij buitenmuren te openen en de verwarming op minstens {set_to} te zetten.",
         "pt": "{honorific}, a temperatura exterior desceu para {reading}. O risco de congelamento das tubagens é elevado. Recomendo abrir as portas dos armários junto às paredes exteriores e definir o aquecimento para pelo menos {set_to}.",
+        "ru": "{honorific}, наружная температура опустилась до {reading}. Риск замерзания труб очень высок. Рекомендую открыть дверцы шкафов у наружных стен и убедиться, что отопление установлено не ниже {set_to}.",
     },
     "freeze_warning": {
         "en": "{honorific}, outdoor temperature is {reading}. I'm monitoring for pipe freeze risk.",
@@ -85,6 +91,7 @@ MESSAGES: dict[str, dict[str, str]] = {
         "it": "{honorific}, la temperatura esterna è di {reading}. Sto monitorando il rischio di congelamento delle tubature.",
         "nl": "{honorific}, de buitentemperatuur is {reading}. Ik houd het risico op bevriezing van leidingen in de gaten.",
         "pt": "{honorific}, a temperatura exterior é de {reading}. Estou a monitorizar o risco de congelamento das tubagens.",
+        "ru": "{honorific}, наружная температура {reading}. Я слежу за риском замерзания труб.",
     },
     "intrusion_alert": {
         "en": "{honorific}, motion at {where} while no one is home{ctx}. Investigating from the point of entry — I'll alert the house and every device only if it's a real intrusion.",
@@ -94,16 +101,17 @@ MESSAGES: dict[str, dict[str, str]] = {
         "it": "{honorific}, movimento a {where} mentre non c'è nessuno in casa{ctx}. Sto indagando dal punto di ingresso — avviserò la casa e tutti i dispositivi solo se si tratta di una vera intrusione.",
         "nl": "{honorific}, beweging bij {where} terwijl er niemand thuis is{ctx}. Ik onderzoek het vanaf het toegangspunt — ik waarschuw het huis en alle apparaten alleen als het een echte inbraak is.",
         "pt": "{honorific}, movimento em {where} enquanto não está ninguém em casa{ctx}. Estou a investigar a partir do ponto de entrada — só alertarei a casa e todos os dispositivos se for uma intrusão real.",
+        "ru": "{honorific}, движение в {where}, пока никого нет дома{ctx}. Проверяю от точки входа — подниму тревогу по всему дому и на всех устройствах только при реальном вторжении.",
     },
     "intrusion_ctx_open": {
         "en": " ({name} open)", "fr": " ({name} ouvert)", "de": " ({name} offen)",
         "es": " ({name} abierto)", "it": " ({name} aperto)",
-        "nl": " ({name} open)", "pt": " ({name} aberto)",
+        "nl": " ({name} open)", "pt": " ({name} aberto)", "ru": " ({name} открыто)",
     },
     "intrusion_ctx_armed": {
         "en": " (alarm armed)", "fr": " (alarme armée)", "de": " (Alarm scharf)",
         "es": " (alarma armada)", "it": " (allarme inserito)",
-        "nl": " (alarm ingeschakeld)", "pt": " (alarme armado)",
+        "nl": " (alarm ingeschakeld)", "pt": " (alarme armado)", "ru": " (сигнализация включена)",
     },
     "lockdown_lifted": {
         "en": "{honorific}, lockdown lifted. The house is back to normal.",
@@ -113,6 +121,7 @@ MESSAGES: dict[str, dict[str, str]] = {
         "it": "{honorific}, blocco revocato. La casa è tornata alla normalità.",
         "nl": "{honorific}, vergrendeling opgeheven. Het huis is weer normaal.",
         "pt": "{honorific}, confinamento levantado. A casa voltou ao normal.",
+        "ru": "{honorific}, режим блокировки снят. Дом вернулся к обычному состоянию.",
     },
     "lockdown_already_secured": {
         "en": "{honorific}, lockdown engaged — the home was already fully secured.",
@@ -122,22 +131,24 @@ MESSAGES: dict[str, dict[str, str]] = {
         "it": "{honorific}, blocco attivato — la casa era già completamente protetta.",
         "nl": "{honorific}, vergrendeling ingeschakeld — het huis was al volledig beveiligd.",
         "pt": "{honorific}, confinamento ativado — a casa já estava totalmente protegida.",
+        "ru": "{honorific}, режим блокировки включён — дом уже был полностью защищён.",
     },
     # ── Composed lockdown pieces (device lists) ─────────────────────────────
     # Verb phrases: {names} is a comma-joined device list and always follows the
     # verb, so past participles stay invariable (no gender agreement with the
     # device). de/nl place the participle after the object, as the grammar wants.
+    # ru uses masculine first-person past ("запер"/"закрыл") to match JARVIS.
     "lockdown_locked": {
         "en": "locked {names}", "fr": "verrouillé {names}",
         "de": "{names} verriegelt", "es": "bloqueado {names}",
         "it": "bloccato {names}", "nl": "{names} vergrendeld",
-        "pt": "tranquei {names}",
+        "pt": "tranquei {names}", "ru": "запер {names}",
     },
     "lockdown_closed": {
         "en": "closed {names}", "fr": "fermé {names}",
         "de": "{names} geschlossen", "es": "cerrado {names}",
         "it": "chiuso {names}", "nl": "{names} gesloten",
-        "pt": "fechei {names}",
+        "pt": "fechei {names}", "ru": "закрыл {names}",
     },
     # Gap clauses — openings that can't be secured remotely. Phrased to avoid any
     # adjective/pronoun agreeing with the (unknown-gender) device: impersonal /
@@ -150,6 +161,7 @@ MESSAGES: dict[str, dict[str, str]] = {
         "it": "{names}: impossibile bloccare a distanza — da chiudere manualmente",
         "nl": "{names}: niet op afstand te vergrendelen — graag handmatig sluiten",
         "pt": "{names}: não dá para trancar à distância — feche manualmente",
+        "ru": "{names}: не удаётся закрыть удалённо — закройте вручную",
     },
     "lockdown_gap_few": {
         "en": "{names} are open and I can't secure them remotely — you'll want to close them",
@@ -159,6 +171,7 @@ MESSAGES: dict[str, dict[str, str]] = {
         "it": "{names}: impossibile bloccare a distanza — da chiudere manualmente",
         "nl": "{names}: niet op afstand te vergrendelen — graag handmatig sluiten",
         "pt": "{names}: não dá para trancar à distância — feche manualmente",
+        "ru": "{names}: не удаётся закрыть удалённо — закройте вручную",
     },
     "lockdown_gap_many": {
         "en": "{count} openings are open and I can't secure them remotely — you'll want to close them",
@@ -168,6 +181,7 @@ MESSAGES: dict[str, dict[str, str]] = {
         "it": "{count} aperture non si possono bloccare a distanza — da chiudere manualmente",
         "nl": "{count} openingen zijn niet op afstand te vergrendelen — graag handmatig sluiten",
         "pt": "{count} aberturas não podem ser trancadas à distância — feche manualmente",
+        "ru": "{count} проёмов не удаётся закрыть удалённо — закройте вручную",
     },
     # Wrappers. The auxiliary ("I", "j'ai", "ich habe", …) lives in the wrapper
     # so {did} — the joined verb phrases — reads naturally after it; pt uses the
@@ -180,6 +194,7 @@ MESSAGES: dict[str, dict[str, str]] = {
         "it": "{honorific}, blocco attivato — ho {did}. La casa è protetta.",
         "nl": "{honorific}, vergrendeling ingeschakeld — ik heb {did}. Het huis is beveiligd.",
         "pt": "{honorific}, confinamento ativado — {did}. A casa está segura.",
+        "ru": "{honorific}, режим блокировки включён — я {did}. Дом под охраной.",
     },
     "lockdown_did_gap": {
         "en": "{honorific}, lockdown engaged — I {did}, but {gap}.",
@@ -189,6 +204,7 @@ MESSAGES: dict[str, dict[str, str]] = {
         "it": "{honorific}, blocco attivato — ho {did}, ma {gap}.",
         "nl": "{honorific}, vergrendeling ingeschakeld — ik heb {did}, maar {gap}.",
         "pt": "{honorific}, confinamento ativado — {did}, mas {gap}.",
+        "ru": "{honorific}, режим блокировки включён — я {did}, но {gap}.",
     },
     "lockdown_gap_only": {
         "en": "{honorific}, lockdown engaged. Everything was already secured, but {gap}.",
@@ -198,6 +214,7 @@ MESSAGES: dict[str, dict[str, str]] = {
         "it": "{honorific}, blocco attivato. Era già tutto protetto, ma {gap}.",
         "nl": "{honorific}, vergrendeling ingeschakeld. Alles was al beveiligd, maar {gap}.",
         "pt": "{honorific}, confinamento ativado. Tudo já estava seguro, mas {gap}.",
+        "ru": "{honorific}, режим блокировки включён. Всё уже было защищено, но {gap}.",
     },
     "lockdown_nighttime": {
         "en": "{honorific}, nighttime lockdown: {body}. The house is secured.",
@@ -207,6 +224,7 @@ MESSAGES: dict[str, dict[str, str]] = {
         "it": "{honorific}, blocco notturno: {body}. La casa è protetta.",
         "nl": "{honorific}, nachtelijke vergrendeling: {body}. Het huis is beveiligd.",
         "pt": "{honorific}, confinamento noturno: {body}. A casa está segura.",
+        "ru": "{honorific}, ночная блокировка: {body}. Дом под охраной.",
     },
 }
 
@@ -237,7 +255,7 @@ def message(key: str, lang: str | None, **params) -> str:
 # Coordinating conjunction per language, for natural-language device lists.
 _AND: dict[str, str] = {
     "en": "and", "fr": "et", "de": "und", "es": "y",
-    "it": "e", "nl": "en", "pt": "e",
+    "it": "e", "nl": "en", "pt": "e", "ru": "и",
 }
 # Languages that put a comma before the final conjunction (the "Oxford comma").
 _OXFORD = {"en"}
