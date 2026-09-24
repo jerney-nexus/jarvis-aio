@@ -57,11 +57,22 @@ def test_russian_title_and_conjunction(i18n):
     assert i18n.join_names(["A", "B"], "ru") == "A и B"
 
 
+def test_ukrainian_and_polish_are_localized_and_filled(i18n):
+    uk = i18n.message("freeze_warning", "uk", honorific="пане", reading="-5°C")
+    assert "температура" in uk and "-5°C" in uk
+    pl = i18n.message("freeze_warning", "pl", honorific="proszę pana", reading="-5°C")
+    assert "temperatura" in pl and "-5°C" in pl
+    assert i18n.title("intrusion_confirmed", "uk") == "JARVIS — ВТОРГНЕННЯ"
+    assert i18n.title("intrusion_confirmed", "pl") == "JARVIS — WŁAMANIE"
+    assert i18n.join_names(["A", "B"], "uk") == "A і B"
+    assert i18n.join_names(["A", "B"], "pl") == "A i B"
+
+
 def test_all_message_keys_cover_all_title_languages(i18n):
     # every message/title present in English must at least exist; the coverage
     # must be symmetric so nothing silently misses a language and falls back to
     # English mid-notification (the "mixed language" bug — discussion #55).
-    langs = {"en", "fr", "de", "es", "it", "nl", "pt", "ru"}
+    langs = {"en", "fr", "de", "es", "it", "nl", "pt", "ru", "uk", "pl"}
     for key, table in i18n.MESSAGES.items():
         assert set(table.keys()) == langs, f"{key} missing languages"
     for key, table in i18n.TITLES.items():
