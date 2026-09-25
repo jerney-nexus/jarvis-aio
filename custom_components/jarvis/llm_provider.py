@@ -9,6 +9,7 @@ Supported backends today:
   - groq        (default — fast, free tier, OpenAI-compatible API)
   - openai      (OpenAI direct, or any OpenAI-compatible endpoint)
   - ollama      (local, self-hosted via OpenAI-compatible endpoint)
+  - gemini      (Google GenAI SDK via the native Interactions API)
   - anthropic   (Claude API)
   - custom      (any OpenAI-compatible endpoint with a base_url)
 
@@ -57,17 +58,31 @@ class LLMProvider(ABC):
         max_tokens: int = 512,
         temperature: float = 0.7,
         model_override: Optional[str] = None,
+        thinking: Optional[bool] = None,
+        run_state: Optional[dict[str, Any]] = None,
     ) -> dict:
         """Run a synchronous chat completion. Returns standardised dict.
 
         model_override lets a caller request a different model for this single
         call (e.g. a vision-capable model for image analysis) without needing
         to create a new provider instance.
+
+        thinking controls extended/internal reasoning on backends that support
+        it (see supports_thinking). False requests the least-thinking setting
+        available; None leaves the setting unset so the model default applies.
+        Ignored by backends that don't support the toggle.
+
+        run_state lets backends keep provider-specific continuation state for
+        one agentic run without storing it on a shared provider instance.
         """
         ...
 
     def supports_vision(self) -> bool:
         """Whether this backend + model can take image inputs."""
+        return False
+
+    def supports_thinking(self) -> bool:
+        """Whether this backend's `thinking` chat() kwarg has any effect."""
         return False
 
     def supports_tools(self) -> bool:
@@ -93,7 +108,8 @@ class GroqProvider(LLMProvider):
             kwargs["base_url"] = base_url
         self._client = Groq(**kwargs)
 
-    def chat(self, messages, tools=None, max_tokens=512, temperature=0.7, model_override=None):
+    def chat(self, messages, tools=None, max_tokens=512, temperature=0.7, model_override=None,
+              thinking=None, run_state=None):
         kwargs: dict[str, Any] = {
             "model": model_override or self.model,
             "messages": messages,
@@ -145,7 +161,8 @@ class OpenAIProvider(LLMProvider):
             kwargs["base_url"] = base_url
         self._client = OpenAI(**kwargs)
 
-    def chat(self, messages, tools=None, max_tokens=512, temperature=0.7, model_override=None):
+    def chat(self, messages, tools=None, max_tokens=512, temperature=0.7, model_override=None,
+              thinking=None, run_state=None):
         kwargs: dict[str, Any] = {
             "model": model_override or self.model,
             "messages": messages,
@@ -155,7 +172,7 @@ class OpenAIProvider(LLMProvider):
         if tools:
             kwargs["tools"] = tools
             kwargs["tool_choice"] = "auto"
-        extra = self._extra_body()
+        extra = self._extra_body(thinking)
         if extra:
             kwargs["extra_body"] = extra
         for _attempt in range(3):
@@ -202,7 +219,7 @@ class OpenAIProvider(LLMProvider):
             "raw": choice.message,
         }
 
-    def _extra_body(self) -> dict:
+    def _extra_body(self, thinking: Optional[bool] = None) -> dict:
         """Provider-specific request extras. Empty for vanilla OpenAI."""
         return {}
 
@@ -248,15 +265,16 @@ class OllamaProvider(OpenAIProvider):
             return base_url.rstrip("/") + "/v1"
         return base_url
 
-    def _extra_body(self) -> dict:
+    def _extra_body(self, thinking: Optional[bool] = None) -> dict:
         # keep_alive + num_ctx are Ollama extensions passed through the
         # OpenAI-compatible endpoint; harmless no-ops on non-Ollama backends,
         # but only OllamaProvider sends them.
-        # think=False: many local models (gemma3/4, qwen3, deepseek-r1) are
+        # think: many local models (gemma3/4, qwen3, deepseek-r1) are
         # reasoning models — their thinking goes to a separate "reasoning"
         # field and "content" stays empty until it finishes. On a small token
-        # budget that means an empty answer, so we ask Ollama to skip thinking
-        # and answer directly. Harmless on non-reasoning models.
+        # budget that means an empty answer, so thinking defaults OFF unless
+        # the caller opts in (dashboard thinking switch). Harmless on
+        # non-reasoning models either way.
         # num_ctx is configurable (ollama_num_ctx) so a larger local model can
         # use a bigger context window; falls back to the default.
         num_ctx = OLLAMA_NUM_CTX
@@ -267,8 +285,256 @@ class OllamaProvider(OpenAIProvider):
                 num_ctx = OLLAMA_NUM_CTX
         except Exception:
             num_ctx = OLLAMA_NUM_CTX
-        return {"keep_alive": OLLAMA_KEEP_ALIVE, "think": False,
+        return {"keep_alive": OLLAMA_KEEP_ALIVE, "think": bool(thinking),
                 "options": {"num_ctx": num_ctx}}
+
+    def supports_thinking(self) -> bool:
+        return True
+
+
+# ─── Gemini (Google GenAI Interactions API) ──────────────────────────────────
+
+class GeminiProvider(LLMProvider):
+    """Google Gemini through the native Interactions API.
+
+    JARVIS callers retain OpenAI-shaped messages and tools. This adapter
+    translates them at the provider boundary and chains interactions on the
+    Gemini server so returned function-call steps retain their signatures.
+    """
+    name = "gemini"
+
+    def __init__(self, api_key: str, model: str, base_url: Optional[str] = None):
+        super().__init__(api_key, model, base_url)
+        try:
+            from google import genai
+        except ImportError as exc:
+            raise RuntimeError(
+                "google-genai package not installed — `pip install google-genai`"
+            ) from exc
+        kwargs: dict[str, Any] = {"api_key": api_key}
+        if base_url:
+            kwargs["http_options"] = {"base_url": base_url}
+        self._client = genai.Client(**kwargs)
+
+    def chat(self, messages, tools=None, max_tokens=512, temperature=0.7, model_override=None,
+              thinking=None, run_state=None):
+        state = run_state if run_state is not None else {}
+        system_instruction = self._system_instruction(messages)
+        continuation = self._is_continuation(messages, state)
+        previous_messages = state.get("previous_messages", [])
+        new_messages = (
+            messages[len(previous_messages):]
+            if continuation else self._plain_conversation_turns(messages)
+        )
+        input_items = self._input_items(new_messages)
+        if not input_items:
+            input_items = self._input_items(self._plain_conversation_turns(messages))
+
+        generation_config: dict[str, Any] = {
+            "max_output_tokens": max_tokens,
+            "temperature": temperature,
+        }
+        # Thinking-capable Gemini/Gemma models spend max_output_tokens on
+        # internal "thought" steps before any answer text, so JARVIS's small
+        # per-call budgets (e.g. vision's 300) can be exhausted by thinking
+        # alone — status "incomplete" with empty output_text. The Interactions
+        # API takes thinking_level directly on generation_config (NOT nested
+        # under a "thinking_config" object — that's the generateContent/REST
+        # ThinkingConfig shape, and it's silently dropped here since it isn't
+        # a recognised field): "high" to think, "minimal" to (mostly) not.
+        # thinking=None (caller has no opinion) leaves it unset entirely so
+        # the model applies its own default — some models (e.g. gemini-3.8-
+        # flash) 400 on "minimal", so callers that can't tolerate that error
+        # (e.g. camera-reasoning) should pass thinking=None rather than False.
+        if thinking is True:
+            generation_config["thinking_level"] = "high"
+        elif thinking is False:
+            generation_config["thinking_level"] = "minimal"
+        kwargs: dict[str, Any] = {
+            "model": model_override or self.model,
+            "input": input_items,
+            "generation_config": generation_config,
+        }
+        if system_instruction:
+            kwargs["system_instruction"] = system_instruction
+        if tools:
+            kwargs["tools"] = [
+                {"type": "function", **tool["function"]}
+                for tool in tools
+                if tool.get("type") == "function" and tool.get("function")
+            ]
+        previous_interaction_id = state.get("previous_interaction_id")
+        if continuation and previous_interaction_id:
+            kwargs["previous_interaction_id"] = previous_interaction_id
+
+        active_generation_config = generation_config
+        try:
+            resp = self._client.interactions.create(**kwargs)
+        except Exception as exc:
+            # Not every model accepts "minimal" (ai.google.dev/gemini-api/docs/
+            # thinking) — some reject it with "thinking level" (space), others
+            # with "thinking_level" (field name), so match either.
+            exc_msg = str(exc).lower()
+            if (thinking is False
+                    and ("thinking_level" in exc_msg or "thinking level" in exc_msg)):
+                # Fresh dict for the retry — kwargs["generation_config"] must
+                # not be mutated in place, or the first (failed) call's
+                # recorded/logged config would silently reflect the retry.
+                # "low" (not dropping the field) — every model in the
+                # thinking-levels table supports it, and omitting it entirely
+                # would leave thinking on by default, defeating the toggle.
+                retry_config = dict(generation_config, thinking_level="low")
+                resp = self._client.interactions.create(**{**kwargs, "generation_config": retry_config})
+                active_generation_config = retry_config
+            else:
+                raise
+        if self._is_incomplete(resp):
+            retry_config = dict(
+                active_generation_config,
+                max_output_tokens=max(max_tokens * 4, 2048),
+            )
+            resp = self._client.interactions.create(
+                **{**kwargs, "generation_config": retry_config}
+            )
+            if self._is_incomplete(resp):
+                raise RuntimeError(
+                    "Gemini interaction remained incomplete after output-budget retry"
+                )
+        if self._is_terminal_failure(resp):
+            status = self._status_value(resp)
+            raise RuntimeError(f"Gemini interaction failed with status: {status}")
+        if run_state is not None:
+            run_state["previous_interaction_id"] = getattr(resp, "id", None)
+            run_state["previous_messages"] = [dict(message) for message in messages]
+        tool_calls = []
+        for step in getattr(resp, "steps", []) or []:
+            if getattr(step, "type", None) == "function_call":
+                tool_calls.append({
+                    "id": getattr(step, "id", ""),
+                    "name": getattr(step, "name", ""),
+                    "args": getattr(step, "arguments", {}) or {},
+                })
+        return {
+            "text": (getattr(resp, "output_text", "") or "").strip(),
+            "tool_calls": tool_calls,
+            "raw": resp,
+        }
+
+    def supports_vision(self) -> bool:
+        return True
+
+    def supports_thinking(self) -> bool:
+        return True
+
+    @staticmethod
+    def _is_incomplete(response) -> bool:
+        return GeminiProvider._status_value(response) == "incomplete"
+
+    @staticmethod
+    def _status_value(response) -> str:
+        status = getattr(response, "status", None)
+        status_value = getattr(status, "value", status)
+        return str(status_value or "").lower().rsplit(".", 1)[-1]
+
+    @staticmethod
+    def _is_terminal_failure(response) -> bool:
+        return GeminiProvider._status_value(response) in {
+            "failed", "cancelled", "budget_exceeded",
+        }
+
+    @staticmethod
+    def _is_continuation(messages: list[dict], run_state: dict[str, Any]) -> bool:
+        previous_interaction_id = run_state.get("previous_interaction_id")
+        previous_messages = run_state.get("previous_messages", [])
+        return bool(previous_interaction_id and len(messages) >= len(previous_messages)
+                    and messages[:len(previous_messages)] == previous_messages)
+
+    @staticmethod
+    def _plain_conversation_turns(messages: list[dict]) -> list[dict]:
+        """Return text/image user turns and plain assistant text for a new interaction.
+
+        JARVIS provides client-managed OpenAI-style history. Replaying its old
+        structured tool-call messages as Interaction inputs can make Gemini
+        process stale function calls without the server-side signatures it
+        expects. Plain transcript turns are safe to preserve as native
+        user_input/model_output items; same-run tool continuations use the
+        server interaction ID instead.
+        """
+        turns = []
+        for message in messages:
+            role = message.get("role")
+            plain_assistant = (
+                role == "assistant" and not message.get("tool_calls")
+                and GeminiProvider._text_content(message.get("content"))
+            )
+            if role == "user" or plain_assistant:
+                turns.append(message)
+        return turns
+
+    @staticmethod
+    def _system_instruction(messages: list[dict]) -> str:
+        return "\n\n".join(
+            GeminiProvider._text_content(message.get("content"))
+            for message in messages if message.get("role") == "system"
+        ).strip()
+
+    @staticmethod
+    def _text_content(content: Any) -> str:
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            return "".join(
+                part.get("text", "") for part in content
+                if isinstance(part, dict) and part.get("type") == "text"
+            )
+        return str(content or "")
+
+    def _input_items(self, messages: list[dict]) -> list[dict]:
+        call_names = {
+            call.get("id", ""): (call.get("function", {}) or {}).get("name", "")
+            for message in messages if message.get("role") == "assistant"
+            for call in message.get("tool_calls", []) or []
+        }
+        items = []
+        for message in messages:
+            role = message.get("role")
+            if role == "user":
+                items.append({"type": "user_input", "content": self._content_parts(message.get("content"))})
+            elif role == "assistant" and not message.get("tool_calls"):
+                text = self._text_content(message.get("content"))
+                if text:
+                    items.append({"type": "model_output", "content": [{"type": "text", "text": text}]})
+            elif role == "tool":
+                call_id = message.get("tool_call_id", "")
+                items.append({
+                    "type": "function_result",
+                    "name": call_names.get(call_id, ""),
+                    "call_id": call_id,
+                    "result": [{"type": "text", "text": self._text_content(message.get("content"))}],
+                })
+        return items
+
+    @staticmethod
+    def _content_parts(content: Any) -> list[dict]:
+        if isinstance(content, str):
+            return [{"type": "text", "text": content}]
+        if not isinstance(content, list):
+            return [{"type": "text", "text": str(content or "")}]
+        parts = []
+        for part in content:
+            if not isinstance(part, dict):
+                continue
+            if part.get("type") == "text":
+                parts.append({"type": "text", "text": part.get("text", "")})
+            elif part.get("type") == "image_url":
+                url = (part.get("image_url") or {}).get("url", "")
+                if url.startswith("data:"):
+                    header, data = url.split(",", 1)
+                    mime_type = header.split(":", 1)[1].split(";", 1)[0]
+                    parts.append({"type": "image", "mime_type": mime_type, "data": data})
+                elif url:
+                    parts.append({"type": "image", "uri": url})
+        return parts or [{"type": "text", "text": ""}]
 
 
 # ─── Anthropic ───────────────────────────────────────────────────────────────
@@ -289,7 +555,8 @@ class AnthropicProvider(LLMProvider):
             kwargs["base_url"] = base_url
         self._client = Anthropic(**kwargs)
 
-    def chat(self, messages, tools=None, max_tokens=512, temperature=0.7, model_override=None):
+    def chat(self, messages, tools=None, max_tokens=512, temperature=0.7, model_override=None,
+              thinking=None, run_state=None):
         # Anthropic's API splits system vs user/assistant, and uses a different
         # image block format than the OpenAI-style image_url our callers send.
         # It also has no "tool" role: a tool call is an assistant `tool_use`
@@ -463,7 +730,7 @@ PROVIDERS = {
     "groq":      GroqProvider,
     "openai":    OpenAIProvider,
     "ollama":    OllamaProvider,    # Ollama's OpenAI-compatible API, tuned local
-    "gemini":    OpenAIProvider,    # Gemini exposes an OpenAI-compatible API
+    "gemini":    GeminiProvider,    # Google GenAI SDK / native Interactions API
     "custom":    OpenAIProvider,    # Any OpenAI-compatible endpoint
     "anthropic": AnthropicProvider,
 }
@@ -506,7 +773,7 @@ def create_provider(
 
     provider_name: 'groq' | 'openai' | 'gemini' | 'ollama' | 'anthropic' | 'custom'
     For 'ollama', set base_url to e.g. 'http://homeassistant.local:11434/v1'
-    For 'gemini', base_url defaults to Google's OpenAI-compat endpoint.
+    Gemini uses Google's native Interactions API through the google-genai SDK.
     For 'custom', set base_url to whatever OpenAI-compatible endpoint you want.
     """
     provider_name = provider_name.lower().strip()
@@ -523,8 +790,6 @@ def create_provider(
     # Default base URLs for provider-specific cases
     if provider_name == "ollama" and not base_url:
         base_url = "http://homeassistant.local:11434/v1"
-    elif provider_name == "gemini" and not base_url:
-        base_url = "https://generativelanguage.googleapis.com/v1beta/openai/"
 
     try:
         return cls(api_key=api_key, model=model, base_url=base_url)

@@ -68,6 +68,23 @@ def _cfg_opt(hass: HomeAssistant, key: str, default=None):
     return jarvis_config.runtime_get(hass, _camera_entry(hass), key, default)
 
 
+VISION_THINKING_MAX_TOKENS_DEFAULT = 1024
+
+
+def _vision_max_tokens(hass: HomeAssistant, base: int, thinking: bool) -> int:
+    """Effective max_tokens for a vision-pipeline call. A thinking model spends
+    part of the budget on internal reasoning before its answer, so with
+    thinking on it needs the larger, configurable budget instead of the tight
+    non-thinking default (`base`)."""
+    if not thinking:
+        return base
+    try:
+        n = int(_cfg_opt(hass, "vision_thinking_max_tokens", VISION_THINKING_MAX_TOKENS_DEFAULT))
+        return n if n > 0 else VISION_THINKING_MAX_TOKENS_DEFAULT
+    except Exception:
+        return VISION_THINKING_MAX_TOKENS_DEFAULT
+
+
 _PROVIDER_CACHE: dict = {}
 
 
@@ -269,6 +286,10 @@ async def _reason_about_scene(
                 max_tokens=220,
                 temperature=0.3,
                 model_override=reasoning_model or None,
+                # thinking left unset (None): the camera-reasoning model isn't
+                # the vision toggle's model, and some models (e.g. gemini-3.8-
+                # flash) 400 on the "minimal" level we'd otherwise send —
+                # leave it unset so it applies its own default.
             )
         )
         data = _parse_json_obj((result.get("text") or "").strip())
@@ -1221,6 +1242,8 @@ async def async_analyze_camera(
     vision_client = await async_make_client(
         hass, vision_provider, vision_model, groq_client)
     try:
+        vision_thinking = bool(_cfg_opt(hass, "vision_thinking_enabled", False))
+        vision_max_tokens = _vision_max_tokens(hass, 300, vision_thinking)
         result = await hass.async_add_executor_job(
             lambda: vision_client.chat(
                 messages=[
@@ -1237,8 +1260,9 @@ async def async_analyze_camera(
                         ),
                     },
                 ],
-                max_tokens=300,
+                max_tokens=vision_max_tokens,
                 model_override=vision_model or None,
+                thinking=vision_thinking,
             )
         )
         analysis = _strip_think((result.get("text") or "").strip())

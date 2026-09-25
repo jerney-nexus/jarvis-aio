@@ -2010,6 +2010,31 @@ dotLabel.textContent = lightBtn.classList.contains("adl")
     ];
   }
 
+  // Roles whose provider can support extended "thinking" (Gemini/Gemma,
+  // Ollama reasoning models). default/tokenDefault must match websocket.py's
+  // snapshot defaults — the key has never been saved otherwise.
+  _THINKING_ROLES = {
+    vision: { key: 'vision_thinking_enabled', default: false, tokenKey: 'vision_thinking_max_tokens', tokenDefault: 1024 },
+  };
+
+  _thinkingToggleRow(cfg, role) {
+    const spec = this._THINKING_ROLES[role];
+    if (!spec) return '';
+    const stored = cfg[spec.key];
+    const on = (stored === undefined || stored === null || stored === '') ? spec.default : !!stored;
+    const tokens = cfg[spec.tokenKey] ?? spec.tokenDefault;
+    return `
+      <div class="model-hint model-thinking-row">
+        <span>Thinking</span>
+        <button class="toggle-btn ${on ? 'on' : 'off'}" data-cfg-key="${spec.key}" data-cfg-val="${on ? 'false' : 'true'}">${on ? 'ON' : 'OFF'}</button>
+        ${on ? `<span class="model-thinking-tokens">
+          <label for="think-tok-${role}">token budget</label>
+          <input id="think-tok-${role}" class="cfg-field cfg-num" type="number" min="256" max="65536" step="128"
+                 data-cfg-key="${spec.tokenKey}" value="${tokens}" title="Higher budget so a thinking model has room to think AND answer.">
+        </span>` : ''}
+      </div>`;
+  }
+
   _renderModelRoles(d) {
     const ALL_PROVIDERS = ['groq', 'openai', 'gemini', 'ollama', 'anthropic', 'custom'];
     const cfg = d.config || {};
@@ -2047,6 +2072,7 @@ dotLabel.textContent = lightBtn.classList.contains("adl")
           <input class="model-custom" data-role="${r.role}" data-cfg-key="${r.modelKey}"
                  type="text" placeholder="enter model id" value="${this._esc(curModel)}" />
           ${r.role === 'vision' ? `<div class="model-hint">Needs an image-capable model — e.g. moondream on Ollama, or a Groq vision model. Text-only models (like gpt-oss) will fail on camera analysis.</div>` : ''}
+          ${this._thinkingToggleRow(cfg, r.role)}
         </div>`;
     }).join('');
   }
@@ -9531,6 +9557,22 @@ ${this._renderExcludedEntities(d)}
     letter-spacing: 0.05em;
     opacity: 0.7;
   }
+  .model-thinking-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    text-transform: uppercase;
+  }
+  .model-thinking-row .toggle-btn { font-size: 9px; padding: 4px 10px; }
+  .model-thinking-tokens {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    text-transform: none;
+    opacity: 0.9;
+  }
+  .model-thinking-tokens label { font-size: 9px; color: var(--text-dim); }
+  .model-thinking-tokens .cfg-num { width: 76px; }
 
   /* APPLIANCES / ENERGY PROFILE */
   .pl-entities { padding: 10px 14px 14px; border-top: 1px solid var(--line); }
