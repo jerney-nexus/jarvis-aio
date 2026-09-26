@@ -21,6 +21,7 @@ from datetime import timedelta
 
 from .presence import get_presence_summary
 from .paths import config_path
+from .sqlite_utils import ClosingConnection
 from .tts_helper import async_announce
 
 _LOGGER = logging.getLogger(__name__)
@@ -47,11 +48,15 @@ CREATE INDEX IF NOT EXISTS idx_trigger_at ON reminders(trigger_at);
 
 def _connect():
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(DB_PATH))
-    conn.row_factory = sqlite3.Row
-    conn.executescript(SCHEMA)
-    conn.commit()
-    return conn
+    conn = sqlite3.connect(str(DB_PATH), factory=ClosingConnection)
+    try:
+        conn.row_factory = sqlite3.Row
+        conn.executescript(SCHEMA)
+        conn.commit()
+        return conn
+    except Exception:
+        conn.close()
+        raise
 
 
 def _in_quiet_hours(now: Optional[datetime] = None) -> bool:

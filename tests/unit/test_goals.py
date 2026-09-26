@@ -2,9 +2,11 @@
 time: lifecycle, the goal prompt, quiet-while-working engagement, closure
 announcements, deadlines, and the safety valves."""
 import sqlite3
+from contextlib import closing
 import sys
 import types
 from datetime import datetime, timedelta
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -21,6 +23,20 @@ def goals(load, tmp_path, monkeypatch):
     mod = load("goals")
     monkeypatch.setattr(mod, "DB_PATH", str(tmp_path / "patterns.db"))
     return mod
+
+
+def test_connect_closes_connection_when_schema_setup_fails(goals, monkeypatch):
+    connection = MagicMock()
+    schema_error = goals.sqlite3.OperationalError("schema failed")
+    connection.execute.side_effect = schema_error
+    monkeypatch.setattr(
+        goals.sqlite3, "connect", MagicMock(return_value=connection)
+    )
+
+    with pytest.raises(goals.sqlite3.OperationalError, match="schema failed"):
+        goals._connect(goals.DB_PATH)
+
+    connection.close.assert_called_once_with()
 
 
 @pytest.fixture
@@ -211,8 +227,9 @@ async def test_runner_error_keeps_goal_active(goals, fake_hass, quiet_activity):
 
 async def test_run_budget_force_fails(goals, fake_hass, quiet_activity):
     gid = _mk(goals)["id"]
-    with sqlite3.connect(goals.DB_PATH) as c:
+    with closing(sqlite3.connect(goals.DB_PATH)) as c:
         c.execute("UPDATE goals SET runs=? WHERE id=?", (goals.MAX_RUNS, gid))
+        c.commit()
     async def runner(prompt, ctx):
         raise AssertionError("budget-exhausted goal must not run")
     actions = await goals.async_process_due(fake_hass, {}, runner, now=NOW,

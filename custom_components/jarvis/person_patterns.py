@@ -21,6 +21,7 @@ from datetime import datetime
 from typing import Optional
 
 from .paths import config_path_str
+from .sqlite_utils import ClosingConnection
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -53,7 +54,7 @@ def ensure_schema(db_path: str = DB_PATH) -> None:
     """Create the person_patterns table + index if missing. Idempotent.
     (cognitive_core also creates it at init; this keeps the module standalone.)"""
     try:
-        with sqlite3.connect(db_path) as conn:
+        with sqlite3.connect(db_path, factory=ClosingConnection) as conn:
             conn.executescript(_SCHEMA)
     except Exception as exc:
         _LOGGER.debug("person_patterns ensure_schema failed: %s", exc)
@@ -70,7 +71,7 @@ def store(person: str, pattern_type: str, description: str, *,
     person = _normalize(person)
     try:
         ensure_schema(db_path)
-        with sqlite3.connect(db_path) as conn:
+        with sqlite3.connect(db_path, factory=ClosingConnection) as conn:
             row = conn.execute(
                 "SELECT id FROM person_patterns "
                 "WHERE person = ? AND pattern_type = ? AND description = ?",
@@ -102,7 +103,7 @@ def read(person: Optional[str] = None, db_path: str = DB_PATH) -> list[dict]:
     """Read stored routines, optionally for one (normalized) person, ordered by
     confidence. Returns a list of dicts (column-keyed). Never raises."""
     try:
-        with sqlite3.connect(db_path) as conn:
+        with sqlite3.connect(db_path, factory=ClosingConnection) as conn:
             conn.row_factory = sqlite3.Row
             if person:
                 rows = conn.execute(

@@ -5,6 +5,8 @@ import sqlite3
 
 import pytest
 
+from jc.sqlite_utils import ClosingConnection
+
 
 @pytest.fixture
 def cc(load):
@@ -21,14 +23,14 @@ def logger(cc, tmp_path, monkeypatch):
 
 
 def test_fresh_db_has_person_column(logger):
-    with sqlite3.connect(logger._db_path) as conn:
+    with sqlite3.connect(logger._db_path, factory=ClosingConnection) as conn:
         cols = {row[1] for row in conn.execute("PRAGMA table_info(state_changes)")}
     assert "person" in cols
 
 
 def test_log_state_change_stores_person(logger):
     logger.log_state_change("light.kitchen", "off", "on", person="Sam")
-    with sqlite3.connect(logger._db_path) as conn:
+    with sqlite3.connect(logger._db_path, factory=ClosingConnection) as conn:
         row = conn.execute(
             "SELECT person FROM state_changes WHERE entity_id = ?",
             ("light.kitchen",),
@@ -38,7 +40,7 @@ def test_log_state_change_stores_person(logger):
 
 def test_log_state_change_defaults_to_unknown(logger):
     logger.log_state_change("light.kitchen", "off", "on")
-    with sqlite3.connect(logger._db_path) as conn:
+    with sqlite3.connect(logger._db_path, factory=ClosingConnection) as conn:
         row = conn.execute(
             "SELECT person FROM state_changes WHERE entity_id = ?",
             ("light.kitchen",),
@@ -50,7 +52,7 @@ def test_migration_adds_person_to_existing_db(cc, tmp_path):
     """An install upgrading from pre-6.41 has state_changes without the
     person column — _init_db must migrate it in place, not just for fresh DBs."""
     db_path = tmp_path / "old_patterns.db"
-    with sqlite3.connect(str(db_path)) as conn:
+    with sqlite3.connect(str(db_path), factory=ClosingConnection) as conn:
         conn.executescript("""
             CREATE TABLE state_changes (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -70,7 +72,7 @@ def test_migration_adds_person_to_existing_db(cc, tmp_path):
     lg._db_path = str(db_path)
     lg._init_db()  # should migrate, not error
 
-    with sqlite3.connect(str(db_path)) as conn:
+    with sqlite3.connect(str(db_path), factory=ClosingConnection) as conn:
         cols = {row[1] for row in conn.execute("PRAGMA table_info(state_changes)")}
         assert "person" in cols
         row = conn.execute(
@@ -110,7 +112,7 @@ def test_listener_stamps_unknown_with_no_presence_signal(cc, core_state):
     ev = _event(cc, "light.den", "off", "on")
     cc._on_state_changed(ev)
 
-    with sqlite3.connect(core_state.state_logger._db_path) as conn:
+    with sqlite3.connect(core_state.state_logger._db_path, factory=ClosingConnection) as conn:
         row = conn.execute(
             "SELECT person FROM state_changes WHERE entity_id='light.den'"
         ).fetchone()
@@ -128,7 +130,7 @@ def test_listener_stamps_known_person_when_home(cc, core_state, load, monkeypatc
     ev = _event(cc, "light.den", "off", "on")
     cc._on_state_changed(ev)
 
-    with sqlite3.connect(core_state.state_logger._db_path) as conn:
+    with sqlite3.connect(core_state.state_logger._db_path, factory=ClosingConnection) as conn:
         row = conn.execute(
             "SELECT person, person_confidence FROM state_changes "
             "WHERE entity_id='light.den'"
@@ -150,7 +152,7 @@ def test_listener_records_probable_person_below_threshold(cc, core_state, load, 
     ev = _event(cc, "light.den", "off", "on")
     cc._on_state_changed(ev)
 
-    with sqlite3.connect(core_state.state_logger._db_path) as conn:
+    with sqlite3.connect(core_state.state_logger._db_path, factory=ClosingConnection) as conn:
         row = conn.execute(
             "SELECT person, person_confidence FROM state_changes "
             "WHERE entity_id='light.den'"
@@ -170,7 +172,7 @@ def test_listener_keeps_unknown_when_candidates_are_tied(cc, core_state, load, m
     ev = _event(cc, "light.den", "off", "on")
     cc._on_state_changed(ev)
 
-    with sqlite3.connect(core_state.state_logger._db_path) as conn:
+    with sqlite3.connect(core_state.state_logger._db_path, factory=ClosingConnection) as conn:
         row = conn.execute(
             "SELECT person FROM state_changes WHERE entity_id='light.den'"
         ).fetchone()
@@ -189,7 +191,7 @@ def test_listener_records_clear_leader_as_best_guess(cc, core_state, load, monke
     ev = _event(cc, "light.den", "off", "on")
     cc._on_state_changed(ev)
 
-    with sqlite3.connect(core_state.state_logger._db_path) as conn:
+    with sqlite3.connect(core_state.state_logger._db_path, factory=ClosingConnection) as conn:
         row = conn.execute(
             "SELECT person, person_confidence FROM state_changes "
             "WHERE entity_id='light.den'"
@@ -208,7 +210,7 @@ def test_listener_survives_identity_failure(cc, core_state, load, monkeypatch):
     ev = _event(cc, "light.den", "off", "on")
     cc._on_state_changed(ev)  # must not raise
 
-    with sqlite3.connect(core_state.state_logger._db_path) as conn:
+    with sqlite3.connect(core_state.state_logger._db_path, factory=ClosingConnection) as conn:
         row = conn.execute(
             "SELECT person FROM state_changes WHERE entity_id='light.den'"
         ).fetchone()
@@ -218,7 +220,7 @@ def test_listener_survives_identity_failure(cc, core_state, load, monkeypatch):
 def test_log_state_change_skips_noisy_domain_by_default(core_state):
     """binary_sensor/device_tracker are excluded from pattern learning by default."""
     core_state.state_logger.log_state_change("binary_sensor.garage_door_1", "off", "on")
-    with sqlite3.connect(core_state.state_logger._db_path) as conn:
+    with sqlite3.connect(core_state.state_logger._db_path, factory=ClosingConnection) as conn:
         rows = conn.execute(
             "SELECT 1 FROM state_changes WHERE entity_id='binary_sensor.garage_door_1'"
         ).fetchall()
@@ -229,7 +231,7 @@ def test_log_state_change_force_include_records_noisy_domain(core_state):
     """force_include (the user opt-in) records a normally-skipped entity (v7.11.0)."""
     core_state.state_logger.log_state_change(
         "binary_sensor.garage_door_1", "off", "on", force_include=True)
-    with sqlite3.connect(core_state.state_logger._db_path) as conn:
+    with sqlite3.connect(core_state.state_logger._db_path, factory=ClosingConnection) as conn:
         rows = conn.execute(
             "SELECT 1 FROM state_changes WHERE entity_id='binary_sensor.garage_door_1'"
         ).fetchall()

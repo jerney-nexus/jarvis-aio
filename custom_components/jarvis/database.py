@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Optional
 
 from .paths import config_path
+from .sqlite_utils import ClosingConnection
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -51,9 +52,10 @@ _last_error: Optional[str] = None   # last connect/schema failure, for diagnosti
 
 def _connect() -> sqlite3.Connection:
     global _last_error
+    conn: sqlite3.Connection | None = None
     try:
         DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(str(DB_PATH))
+        conn = sqlite3.connect(str(DB_PATH), factory=ClosingConnection)
         conn.row_factory = sqlite3.Row
         conn.executescript(SCHEMA)
         conn.commit()
@@ -63,6 +65,8 @@ def _connect() -> sqlite3.Connection:
         # A schema/migration failure is NOT swallowed silently — it's logged and
         # retained so diagnostics can report the store as degraded. Callers still
         # handle the raised error for the individual operation.
+        if conn is not None:
+            conn.close()
         _last_error = f"{type(exc).__name__}: {exc}"
         _LOGGER.error("conversation DB connect/schema failed: %s", exc)
         raise

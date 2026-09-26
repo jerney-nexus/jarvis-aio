@@ -68,6 +68,7 @@ def test_coverage_and_negative_evidence_in_details(analyzer, tmp_path):
     assert b.details["observed_days"] == 3 and b.details["opportunity_days"] == 6
     assert b.details["skipped_days"] == 3
     assert b.coverage == 0.5
+    conn.close()
 
 
 def test_higher_coverage_scores_higher(analyzer, tmp_path):
@@ -83,6 +84,7 @@ def test_higher_coverage_scores_higher(analyzer, tmp_path):
     # same 6 hits each, but the full-coverage routine is more confident
     assert found["light.a"].occurrences == found["light.b"].occurrences == 6
     assert found["light.a"].confidence > found["light.b"].confidence
+    conn.close()
 
 
 def test_small_sample_is_discounted(analyzer, tmp_path):
@@ -100,6 +102,7 @@ def test_small_sample_is_discounted(analyzer, tmp_path):
     assert p.coverage == 1.0
     assert p.confidence < 1.0          # small sample -> not fully trusted
     assert abs(p.confidence - round(3 / analyzer.MIN_OCCURRENCES, 3)) < 1e-6
+    conn.close()
 
 
 def test_explain_surfaces_missed_days(analyzer):

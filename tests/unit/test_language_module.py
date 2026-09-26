@@ -75,7 +75,7 @@ def _load_real_directive_helper():
     """Load the real directive_helper into jc.directive_helper, past conftest's
     lightweight stub, restoring the stub afterwards so other tests are
     unaffected."""
-    from tests.conftest import COMP  # type: ignore
+    from conftest import COMP
     stub = sys.modules.get("jc.directive_helper")
     sys.modules.pop("jc.directive_helper", None)
     try:

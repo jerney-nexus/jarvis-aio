@@ -1184,8 +1184,9 @@ def save_to_db(db_path: str) -> int:
     """Persist the model to patterns.db. SYNC — call via executor."""
     import json
     import sqlite3
+    from .sqlite_utils import ClosingConnection
     try:
-        with sqlite3.connect(db_path, timeout=10) as conn:
+        with sqlite3.connect(db_path, timeout=10, factory=ClosingConnection) as conn:
             conn.execute(
                 "CREATE TABLE IF NOT EXISTS cognition_model "
                 "(entity_id TEXT PRIMARY KEY, data TEXT, updated REAL)"
@@ -1207,9 +1208,10 @@ def load_from_db(db_path: str) -> int:
     """Load the model from patterns.db. SYNC — call via executor."""
     import json
     import sqlite3
+    from .sqlite_utils import ClosingConnection
     n = 0
     try:
-        with sqlite3.connect(db_path, timeout=10) as conn:
+        with sqlite3.connect(db_path, timeout=10, factory=ClosingConnection) as conn:
             conn.execute(
                 "CREATE TABLE IF NOT EXISTS cognition_model "
                 "(entity_id TEXT PRIMARY KEY, data TEXT, updated REAL)"

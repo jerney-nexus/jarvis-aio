@@ -13,6 +13,8 @@ from datetime import datetime, timedelta
 
 import pytest
 
+from jc.sqlite_utils import ClosingConnection
+
 
 @pytest.fixture
 def pa(load):
@@ -38,12 +40,12 @@ def logger(cc, tmp_path):
 def test_event_entity_needs_optin(logger):
     # without force_include, event.* is filtered like other noisy domains
     logger.log_state_change("event.remote", "", "single", force_include=False)
-    with sqlite3.connect(logger._db_path) as c:
+    with sqlite3.connect(logger._db_path, factory=ClosingConnection) as c:
         assert c.execute("SELECT COUNT(*) FROM state_changes "
                          "WHERE domain='event'").fetchone()[0] == 0
     # opted in (force_include) → logged with the event_type as the value
     logger.log_state_change("event.remote", "", "single", force_include=True)
-    with sqlite3.connect(logger._db_path) as c:
+    with sqlite3.connect(logger._db_path, factory=ClosingConnection) as c:
         row = c.execute("SELECT new_state FROM state_changes "
                         "WHERE domain='event'").fetchone()
     assert row and row[0] == "single"
@@ -52,7 +54,7 @@ def test_event_entity_needs_optin(logger):
 def test_scene_activation_is_logged(logger):
     # scenes are no longer meta-skipped — they're valid action targets
     logger.log_state_change("scene.movie_night", "", "activated")
-    with sqlite3.connect(logger._db_path) as c:
+    with sqlite3.connect(logger._db_path, factory=ClosingConnection) as c:
         row = c.execute("SELECT new_state FROM state_changes "
                         "WHERE domain='scene'").fetchone()
     assert row and row[0] == "activated"
@@ -129,7 +131,7 @@ _SCHEMA = (
 
 
 def _conn(path):
-    conn = sqlite3.connect(str(path))
+    conn = sqlite3.connect(str(path), factory=ClosingConnection)
     conn.executescript(_SCHEMA)
     conn.row_factory = sqlite3.Row
     return conn
@@ -161,3 +163,4 @@ def test_button_to_scene_detected_and_emitted(pa, tmp_path):
     assert auto["trigger"] == {"platform": "state", "entity_id": "event.living_remote"}
     assert auto["action"][-1]["service"] == "scene.turn_on"
     assert any(c["condition"] == "template" for c in auto["condition"])
+    conn.close()

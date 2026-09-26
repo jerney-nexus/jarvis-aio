@@ -60,6 +60,7 @@ def test_sequence_detected_within_window(analyzer, tmp_path):
     assert m, "expected the light.a -> light.b sequence"
     assert m[0].occurrences >= 5
     assert "light.a" in m[0].description and "light.b" in m[0].description
+    conn.close()
 
 
 def test_pairs_outside_window_not_counted(analyzer, tmp_path):
@@ -75,6 +76,7 @@ def test_pairs_outside_window_not_counted(analyzer, tmp_path):
          if p.details.get("trigger", {}).get("entity") == "light.a"
          and p.details.get("action", {}).get("entity") == "light.b"]
     assert not m
+    conn.close()
 
 
 def test_sequence_scales_on_large_history(analyzer, tmp_path):
@@ -95,6 +97,7 @@ def test_sequence_scales_on_large_history(analyzer, tmp_path):
     elapsed = time.monotonic() - start
     assert isinstance(pats, list)
     assert elapsed < 10.0, f"sequence detection too slow on 15k rows: {elapsed:.1f}s"
+    conn.close()
 
 
 def test_cross_domain_sequence_with_measured_delay(analyzer, tmp_path):
@@ -112,6 +115,7 @@ def test_cross_domain_sequence_with_measured_delay(analyzer, tmp_path):
     assert m, "cross-domain switch->light sequence should be found"
     assert 80 <= m[0].details["delay_seconds"] <= 100   # measured, ~90s
     assert "later" in m[0].description
+    conn.close()
 
 
 def test_generate_automation_uses_measured_delay(analyzer):
@@ -159,6 +163,7 @@ def test_sequence_prefers_sun_condition_over_time(analyzer, tmp_path, monkeypatc
     assert m and m[0].details["condition"] == [{
         "condition": "sun", "after": "sunset", "before": "sunrise"}]
     assert "after dark" in m[0].description
+    conn.close()
 
 
 def test_sequence_falls_back_to_time_without_location(analyzer, tmp_path):
@@ -173,3 +178,4 @@ def test_sequence_falls_back_to_time_without_location(analyzer, tmp_path):
     pats = analyzer.PatternAnalyzer()._find_sequence_patterns(conn, None, None)
     m = [p for p in pats if p.details["trigger"]["entity"] == "binary_sensor.hall_motion"]
     assert m and m[0].details["condition"][0]["condition"] == "time"
+    conn.close()

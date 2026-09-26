@@ -103,6 +103,7 @@ def test_sequence_gets_numeric_and_sun_conditions(pa, tmp_path):
     num = next(c for c in conds if c["condition"] == "numeric_state")
     assert num["entity_id"] == "sensor.hall_temperature" and num["below"] <= 62.0
     assert "below" in m[0].description
+    conn.close()
 
 
 # ── emission: a list of conditions becomes HA's ANDed condition block ─────────

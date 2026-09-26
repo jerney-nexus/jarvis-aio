@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Optional
 
 from .paths import config_path_str
+from .sqlite_utils import ClosingConnection
 
 from homeassistant.core import HomeAssistant
 
@@ -798,7 +799,8 @@ class PatternAnalyzer:
         try:
             if not Path(self._db).exists():
                 return None
-            conn = sqlite3.connect(self._db, check_same_thread=False)
+            conn = sqlite3.connect(self._db, check_same_thread=False,
+                                   factory=ClosingConnection)
             conn.row_factory = sqlite3.Row
             return conn
         except Exception:
@@ -819,10 +821,11 @@ class PatternAnalyzer:
                 return False
             days = (datetime.now() - datetime.fromisoformat(oldest)).days
             count = conn.execute("SELECT COUNT(*) FROM state_changes").fetchone()[0]
-            conn.close()
             return days >= MIN_DAYS and count >= 50
         except Exception:
             return False
+        finally:
+            conn.close()
 
     def pattern_diagnostic(self) -> dict:
         """Explain why routines may not be forming: the busiest sources (flood
@@ -1862,7 +1865,7 @@ class PatternAnalyzer:
         actionability filter existed (and any a generator change later renders
         non-installable). Returns how many were removed. Never raises."""
         try:
-            conn = sqlite3.connect(self._db)
+            conn = sqlite3.connect(self._db, factory=ClosingConnection)
         except Exception:
             return 0
         removed = 0
@@ -1895,7 +1898,7 @@ class PatternAnalyzer:
         if not normalize_suggestion_automation(auto_yaml).get("installable"):
             return False
         try:
-            conn = sqlite3.connect(self._db)
+            conn = sqlite3.connect(self._db, factory=ClosingConnection)
             # Check if similar suggestion already exists
             existing = conn.execute(
                 "SELECT id FROM suggestions WHERE description = ?",
@@ -1943,6 +1946,11 @@ class PatternAnalyzer:
         except Exception as exc:
             _LOGGER.debug("Store suggestion error: %s", exc)
             return False
+        finally:
+            try:
+                conn.close()
+            except UnboundLocalError:
+                pass
 
     # ── Home Assistant trigger / condition taxonomy (roadmap reference) ──────
     # The long-term goal is for JARVIS to learn and emit the FULL range of HA
