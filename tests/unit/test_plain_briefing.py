@@ -193,10 +193,10 @@ async def test_async_briefing_collects_hazards_and_snapshot_context(b, fake_hass
         }
 
     haz = SimpleNamespace(scan_now=fake_scan_now)
-    pkg.hazard_monitor = haz
+    monkeypatch.setattr(pkg, "hazard_monitor", haz, raising=False)
     proactive = SimpleNamespace(get_snapshot_summary=lambda hours=None: "camera: 2 motion events detected")
-    pkg.proactive_briefing = proactive
-    sys.modules["jc.proactive_briefing"] = proactive
+    monkeypatch.setattr(pkg, "proactive_briefing", proactive, raising=False)
+    monkeypatch.setitem(sys.modules, "jc.proactive_briefing", proactive)
 
     class DummyClient:
         def chat(self, messages, max_tokens=1500, temperature=0.6):
