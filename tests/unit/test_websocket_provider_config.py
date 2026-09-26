@@ -303,3 +303,116 @@ async def test_ws_update_config_marks_review_provider_as_explicit_opt_in(fake_ha
     assert runtime["review_enabled"] is True
     assert persisted == [{"review_provider": "gemini", "review_enabled": True}]
     assert refreshes == [{"review_provider": "gemini", "review_enabled": True}]
+
+
+def test_get_observer_stats_aggregates_activity_and_cognition(fake_hass, monkeypatch):
+    websocket = _load_websocket_module()
+    import time
+
+    state = types.SimpleNamespace(
+        running=True,
+        classifier_timestamps=[time.time() - 10, time.time() - 4000],
+        hass=fake_hass,
+    )
+    observer = types.SimpleNamespace(
+        _STATE=state,
+        _effective_rate_limit=lambda: 12,
+        _cognition_enabled=lambda: False,
+        _cognition_threshold=lambda: 0.75,
+    )
+    cognition = types.SimpleNamespace(
+        stats=lambda: {
+            "entities_tracked": 4,
+            "events_seen": 9,
+            "anomalies_escalated": 2,
+            "predictable": 3,
+            "routines": 5,
+            "presence_routines": 1,
+        },
+        presence_status=lambda hass: ["person.alex"],
+    )
+    monkeypatch.setitem(sys.modules, "jc.observer", observer)
+    monkeypatch.setattr(sys.modules["jc"], "observer", observer, raising=False)
+    monkeypatch.setitem(sys.modules, "jc.cognition", cognition)
+    monkeypatch.setattr(sys.modules["jc"], "cognition", cognition, raising=False)
+
+    recent = [
+        {"was_spoken": True, "message": "event flagged", "source": "observer"},
+        {"was_spoken": False, "message": "not worth announcing"},
+        {"was_spoken": True, "message": "normal event"},
+    ]
+    result = websocket._get_observer_stats(
+        recent,
+        {"learned_patterns": 7, "cloud_calls": 2},
+    )
+
+    assert result["running"] is True
+    assert result["calls_last_hour"] == 1
+    assert result["rate_limit"] == 12
+    assert (result["events_24h"], result["flagged_24h"]) == (3, 1)
+    assert (result["dropped_24h"], result["spoken_24h"]) == (1, 2)
+    assert result["cognition_enabled"] is False
+    assert result["cognition_threshold"] == 0.75
+    assert result["cog_entities"] == 4
+    assert result["cog_presence"] == 1
+    assert result["presence"] == ["person.alex"]
+    assert result["learned_patterns"] == 7
+    assert result["cloud_calls"] == 2
+
+
+def test_get_observer_stats_loads_recent_activity_when_not_supplied(monkeypatch):
+    websocket = _load_websocket_module()
+    calls = []
+    recent = [{"was_spoken": True, "message": "flagged event"}]
+    database = types.ModuleType("jc.database")
+    database.get_recent_activity = lambda **kwargs: calls.append(kwargs) or recent
+    observer = types.SimpleNamespace(
+        _STATE=types.SimpleNamespace(running=False, hass=None),
+        _effective_rate_limit=lambda: 30,
+        _cognition_enabled=lambda: True,
+        _cognition_threshold=lambda: 0.6,
+    )
+    cognition = types.SimpleNamespace(
+        stats=lambda: {},
+        presence_status=lambda hass: [],
+    )
+    monkeypatch.setitem(sys.modules, "jc.database", database)
+    monkeypatch.setitem(sys.modules, "jc.observer", observer)
+    monkeypatch.setattr(sys.modules["jc"], "observer", observer, raising=False)
+    monkeypatch.setitem(sys.modules, "jc.cognition", cognition)
+    monkeypatch.setattr(sys.modules["jc"], "cognition", cognition, raising=False)
+
+    result = websocket._get_observer_stats()
+
+    assert calls == [{"hours": 24, "limit": 500}]
+    assert result["events_24h"] == 1
+    assert result["flagged_24h"] == 1
+    assert result["spoken_24h"] == 1
+
+
+async def test_async_get_observer_stats_fetches_activity_and_passes_reasoning(
+    fake_hass, monkeypatch,
+):
+    websocket = _load_websocket_module()
+    activity = [{"message": "recent event"}]
+    reasoning = {"learned_patterns": 3}
+    calls = []
+
+    def _get_recent_activity(hours, limit):
+        calls.append((hours, limit))
+        return activity
+
+    database = types.ModuleType("jc.database")
+    database.get_recent_activity = _get_recent_activity
+    monkeypatch.setitem(sys.modules, "jc.database", database)
+    monkeypatch.setattr(websocket, "_get_reasoning_stats", lambda: reasoning)
+    monkeypatch.setattr(
+        websocket,
+        "_get_observer_stats",
+        lambda recent, reasoning_stats: (recent, reasoning_stats),
+    )
+
+    result = await websocket._async_get_observer_stats(fake_hass)
+
+    assert calls == [(24, 500)]
+    assert result == (activity, reasoning)
