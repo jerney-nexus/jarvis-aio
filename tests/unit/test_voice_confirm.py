@@ -202,12 +202,20 @@ async def test_confirm_native_failure_falls_back_to_gated(vc, monkeypatch):
 
 async def test_start_listening_uses_esphome_fallback(vc, monkeypatch):
     hass = _Hass()
-    async def _fail(*args, **kwargs):
-        raise RuntimeError("native unavailable")
-    hass.services.async_call = _fail
+    calls = []
+    async def _fail_native_then_succeed(domain, service, data, **kwargs):
+        calls.append((domain, service, data, kwargs))
+        if len(calls) == 1:
+            raise RuntimeError("native unavailable")
     monkeypatch.setattr(vc, "_cfg", _cfg_map({
         "satellite_start_action": {"sat.one": "esphome.basement_start_va"}}))
-    assert await vc._start_listening(hass, "sat.one") is False
+    hass.services.async_call = _fail_native_then_succeed
+    assert await vc._start_listening(hass, "sat.one") is True
+    assert calls == [
+        ("assist_satellite", "start_conversation",
+         {"entity_id": "sat.one", "preannounce": False}, {"blocking": False}),
+        ("esphome", "basement_start_va", {}, {"blocking": False}),
+    ]
 
 
 async def test_ask_followup_no_satellite_and_native_success(vc, monkeypatch):
