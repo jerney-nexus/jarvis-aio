@@ -1,3 +1,13 @@
+## [8.2.1] — close SQLite connections and file handles deterministically
+
+**Fixes unclosed database connections and file handles** (#99, contributed by @PhoenixB). SQLite's context manager commits or rolls back a transaction on exit but does **not** close the connection, so `with sqlite3.connect(...) as conn:` left the handle open — noisy as `ResourceWarning`/`PytestUnraisableExceptionWarning` under Python 3.14, and holding database resources open longer than intended in production.
+
+- **A closing connection type.** A new `ClosingConnection` subclass preserves sqlite3's commit-on-success / rollback-on-exception behavior and then closes the connection on context exit, so `with _connect() as conn:` now frees the handle deterministically.
+- **Applied across the SQLite helpers** — `database`, `goals`, `followups`, `reminders`, and the `PatternAnalyzer` paths — including the early-return and exception paths that previously leaked (e.g. `should_analyze` returning before it read a row, and connections opened before a schema-setup failure).
+- **Tests close what they open**, and the run is clean: `PYTHONTRACEMALLOC=1 pytest -W error::ResourceWarning` → 1720 passed, 3 skipped, **0 unclosed-resource warnings**.
+
+No behavior or settings change.
+
 ## [8.2.0] — delivery announcements confirm a real delivery, not just a trigger
 
 Faster mail/package announcements (8.0.0) reacted to porch motion and mailbox sensors. A mailbox contact sensor opening announced *"mail has arrived"* with **no camera check at all** — so wind, an animal, or you checking the mail could trip it. Now JARVIS confirms an actual delivery before it speaks:
