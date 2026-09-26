@@ -79,22 +79,30 @@ def test_gather_weather_open_things_calendar_and_energy(b, fake_hass):
 
 def test_gather_overnight_events_reads_db_and_handles_missing_file(b, fake_hass, tmp_path, monkeypatch):
     import jc.paths as paths
+    from datetime import timedelta
 
     missing = tmp_path / "missing" / "conversations.db"
     monkeypatch.setattr(paths, "config_path", lambda *parts, **kwargs: missing)
     assert b._gather_overnight_events(fake_hass, hours=6) == []
 
+    fixed_now = datetime(2026, 9, 26, 12, 0)
+    class FixedDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return fixed_now.replace(tzinfo=tz)
+
+    monkeypatch.setattr(b, "datetime", FixedDateTime)
     db_path = tmp_path / "jarvis" / "conversations.db"
     db_path.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(db_path) as conn:
         conn.execute("CREATE TABLE sentinel_events (timestamp TEXT, detail TEXT)")
         conn.execute(
             "INSERT INTO sentinel_events (timestamp, detail) VALUES (?, ?)",
-            ("2026-09-26T04:00:00", "Motion at front door"),
+            ((fixed_now - timedelta(hours=8)).isoformat(), "Motion at front door"),
         )
         conn.execute(
             "INSERT INTO sentinel_events (timestamp, detail) VALUES (?, ?)",
-            ("2026-09-26T08:30:00", "Doorbell rang"),
+            ((fixed_now - timedelta(hours=3, minutes=30)).isoformat(), "Doorbell rang"),
         )
         conn.commit()
 
