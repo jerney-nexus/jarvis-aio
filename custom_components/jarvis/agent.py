@@ -3026,16 +3026,20 @@ async def _run_delegated(hass, args: dict, *, persona: str, provider_name: str,
         return json.dumps({"error": "sub-agent failed: %s" % exc})
 
 
-def _language_directive(hass) -> str:
+def _language_directive(hass, lang=None) -> str:
     """Household-language system-prompt block.
 
-    Thin wrapper over :func:`directive_helper.language_directive`, which is the
-    single source of truth so conversation replies (here) and every task prompt
-    built via ``build_system_prompt`` (briefings, camera analysis, sentinel, …)
-    steer to the same configured language. Returns ``""`` for English installs.
+    Thin wrapper over :func:`language.language_directive`, which is the single
+    source of truth so conversation replies (here) and every task prompt built
+    via ``build_system_prompt`` (briefings, camera analysis, sentinel, …) steer
+    to the same language. ``lang`` is the per-request conversation / voice
+    pipeline language (``user_input.language``); when set it wins over the
+    global Home Assistant language, so a request through a German satellite is
+    answered in German even if the household's global language is Russian.
+    Returns ``""`` for English installs.
     """
     from .language import language_directive
-    directive = language_directive(hass)
+    directive = language_directive(hass, lang)
     # run_agent expects a trailing blank line before the next prompt section.
     return f"{directive}\n" if directive else ""
 
@@ -3122,10 +3126,16 @@ async def run_agent(
     # everything that follows.
     profile_block = f"{extra_directive}\n" if extra_directive else ""
 
+    # Steer the reply to the language this request actually came in on (the
+    # voice pipeline / conversation language), which wins over the household's
+    # global language — so a German satellite is answered in German even in a
+    # DE+RU household. Falls back to the global language when there's no request.
+    req_lang = getattr(user_input, "language", None) if user_input else None
+
     system_prompt = (
         f"{persona}\n\n"
         f"{profile_block}"
-        f"{_language_directive(hass)}"
+        f"{_language_directive(hass, req_lang)}"
         f"## Current home state\n{home_context}\n\n"
         f"{situation_block}"
         f"{awareness_block}"
