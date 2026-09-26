@@ -1,0 +1,92 @@
+name: Traffic
+
+# Archives repository traction daily. GitHub discards traffic data (views,
+# clones, referrers, popular pages) after 14 days, so this snapshots it every
+# day onto the orphan `traffic-data` branch, alongside stars/forks/watchers,
+# release downloads and Home Assistant analytics installs. The rendered report
+# lands in the run summary daily and, on Mondays, in a "Weekly traction
+# report" issue so it reaches the maintainer's notifications.
+#
+# Setup: the traffic endpoints need a token GITHUB_TOKEN cannot be granted.
+# Add a fine-grained PAT scoped to this repo with "Administration: read-only"
+# as the repository secret TRAFFIC_TOKEN. Without it the job still records
+# the public metrics and says what is missing.
+on:
+  schedule:
+    - cron: "17 3 * * *"     # daily, off the top of the hour
+  workflow_dispatch:
+    inputs:
+      digest:
+        description: Also open the weekly digest issue now
+        type: boolean
+        default: false
+
+permissions:
+  contents: write        # push to the traffic-data branch
+  issues: write          # weekly digest issue
+
+concurrency:
+  group: traffic
+  cancel-in-progress: false
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Check out (or start) the traffic-data branch
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          url="https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
+          if git ls-remote --exit-code --heads "$url" traffic-data >/dev/null; then
+            git clone --depth 1 --branch traffic-data "$url" data
+          else
+            mkdir data && git -C data init -b traffic-data
+            git -C data remote add origin "$url"
+            printf '# Traffic data\n\nWritten daily by `.github/workflows/traffic.yml`; see REPORT.md.\n' > data/README.md
+          fi
+
+      - name: Snapshot
+        env:
+          TRAFFIC_TOKEN: ${{ secrets.TRAFFIC_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 scripts/traffic_snapshot.py data
+          cat data/REPORT.md >> "$GITHUB_STEP_SUMMARY"
+          if [ -z "$TRAFFIC_TOKEN" ]; then
+            echo "::warning::TRAFFIC_TOKEN is not set — views, clones and referrers were skipped. See the header of traffic.yml."
+          fi
+
+      - name: Commit snapshot
+        run: |
+          cd data
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet || git commit -q -m "traffic: $(date -u +%F)"
+          git push -q origin traffic-data
+
+      - name: Weekly digest issue
+        if: github.event_name == 'schedule' || inputs.digest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FORCE: ${{ inputs.digest }}
+        run: |
+          if [ "$FORCE" != "true" ] && [ "$(date -u +%u)" != "1" ]; then
+            echo "Not Monday — digest skipped."; exit 0
+          fi
+          {
+            cat data/REPORT.md
+            echo
+            echo "Playbook: [docs/GROWTH.md](${{ github.server_url }}/${{ github.repository }}/blob/${{ github.event.repository.default_branch }}/docs/GROWTH.md) · History: [traffic-data](${{ github.server_url }}/${{ github.repository }}/tree/traffic-data)"
+          } > digest.md
+          # Close last week's digest so only the current one is open.
+          gh issue list --repo "${{ github.repository }}" --state open --search 'in:title "Weekly traction report"' \
+            --json number --jq '.[].number' | xargs -r -I{} gh issue close {} --repo "${{ github.repository }}" --reason completed
+          gh issue create --repo "${{ github.repository }}" \
+            --title "Weekly traction report — $(date -u +%F)" \
+            --body-file digest.md
