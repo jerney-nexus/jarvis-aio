@@ -6,6 +6,7 @@ from contextlib import closing
 import sys
 import types
 from datetime import datetime, timedelta
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -22,6 +23,20 @@ def goals(load, tmp_path, monkeypatch):
     mod = load("goals")
     monkeypatch.setattr(mod, "DB_PATH", str(tmp_path / "patterns.db"))
     return mod
+
+
+def test_connect_closes_connection_when_schema_setup_fails(goals, monkeypatch):
+    connection = MagicMock()
+    schema_error = goals.sqlite3.OperationalError("schema failed")
+    connection.execute.side_effect = schema_error
+    monkeypatch.setattr(
+        goals.sqlite3, "connect", MagicMock(return_value=connection)
+    )
+
+    with pytest.raises(goals.sqlite3.OperationalError, match="schema failed"):
+        goals._connect(goals.DB_PATH)
+
+    connection.close.assert_called_once_with()
 
 
 @pytest.fixture

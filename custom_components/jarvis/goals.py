@@ -49,25 +49,29 @@ STATUSES = ("active", "done", "failed", "cancelled")
 
 def _connect(db_path: str) -> sqlite3.Connection:
     conn = sqlite3.connect(db_path, factory=ClosingConnection)
-    conn.row_factory = sqlite3.Row
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS goals (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            created_ts TEXT NOT NULL,
-            updated_ts TEXT NOT NULL,
-            title TEXT NOT NULL,
-            outcome TEXT NOT NULL,
-            steps TEXT NOT NULL DEFAULT '[]',
-            status TEXT NOT NULL DEFAULT 'active',
-            progress TEXT NOT NULL DEFAULT '[]',
-            next_check_ts TEXT NOT NULL,
-            check_interval_min REAL NOT NULL DEFAULT 30,
-            deadline_ts TEXT,
-            runs INTEGER NOT NULL DEFAULT 0,
-            last_result TEXT DEFAULT ''
-        )""")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_goal_due ON goals(status, next_check_ts)")
-    return conn
+    try:
+        conn.row_factory = sqlite3.Row
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS goals (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_ts TEXT NOT NULL,
+                updated_ts TEXT NOT NULL,
+                title TEXT NOT NULL,
+                outcome TEXT NOT NULL,
+                steps TEXT NOT NULL DEFAULT '[]',
+                status TEXT NOT NULL DEFAULT 'active',
+                progress TEXT NOT NULL DEFAULT '[]',
+                next_check_ts TEXT NOT NULL,
+                check_interval_min REAL NOT NULL DEFAULT 30,
+                deadline_ts TEXT,
+                runs INTEGER NOT NULL DEFAULT 0,
+                last_result TEXT DEFAULT ''
+            )""")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_goal_due ON goals(status, next_check_ts)")
+        return conn
+    except Exception:
+        conn.close()
+        raise
 
 
 def _now(now: Optional[datetime]) -> datetime:
