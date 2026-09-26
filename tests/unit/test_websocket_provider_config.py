@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import importlib.util
+import datetime
 import pathlib
 import sys
 import types
@@ -416,3 +417,271 @@ async def test_async_get_observer_stats_fetches_activity_and_passes_reasoning(
 
     assert calls == [(24, 500)]
     assert result == (activity, reasoning)
+
+
+async def test_get_area_sparklines_parses_and_downsamples_recorder_states(
+    fake_hass, monkeypatch,
+):
+    websocket = _load_websocket_module()
+    calls = {}
+    raw = {
+        "sensor.room_temperature": [
+            {"state": "18.5"},
+            types.SimpleNamespace(state="19.0"),
+            {"state": "unknown"},
+            {"state": "21.5"},
+            {"state": "22.0"},
+        ],
+        "sensor.room_humidity": [
+            {"state": "45"},
+            {"state": "46.5"},
+        ],
+    }
+
+    class _RecorderInstance:
+        async def async_add_executor_job(self, func):
+            return func()
+
+    def _get_significant_states(hass, start, end, entity_ids, **kwargs):
+        calls.update({
+            "start": start,
+            "end": end,
+            "entity_ids": entity_ids,
+            "kwargs": kwargs,
+        })
+        return raw
+
+    recorder = types.ModuleType("homeassistant.components.recorder")
+    recorder.get_instance = lambda hass: _RecorderInstance()
+    recorder.history = types.SimpleNamespace(get_significant_states=_get_significant_states)
+    components = sys.modules["homeassistant.components"]
+    monkeypatch.setattr(components, "__path__", [], raising=False)
+    monkeypatch.setattr(components, "recorder", recorder, raising=False)
+    monkeypatch.setitem(sys.modules, "homeassistant.components.recorder", recorder)
+
+    result = await websocket._get_area_sparklines(
+        fake_hass,
+        {
+            "living": {
+                "temp": "sensor.room_temperature",
+                "humidity": "sensor.room_humidity",
+            },
+            "empty": {"temp": "sensor.no_history", "humidity": None},
+        },
+        hours=3,
+        points=2,
+    )
+
+    assert result == {
+        "living": {"temp": [18.5, 21.5], "humidity": [45.0, 46.5]},
+    }
+    assert calls["entity_ids"] == [
+        "sensor.no_history",
+        "sensor.room_humidity",
+        "sensor.room_temperature",
+    ]
+    assert calls["end"] - calls["start"] == datetime.timedelta(hours=3)
+    assert calls["kwargs"] == {"minimal_response": True, "no_attributes": True}
+
+
+async def test_get_area_sparklines_returns_empty_without_entities(fake_hass):
+    websocket = _load_websocket_module()
+
+    result = await websocket._get_area_sparklines(
+        fake_hass, {"living": {"temp": None, "humidity": None}}
+    )
+
+    assert result == {}
+
+
+async def test_get_area_sparklines_handles_recorder_failure(fake_hass, monkeypatch):
+    websocket = _load_websocket_module()
+
+    class _RecorderInstance:
+        async def async_add_executor_job(self, func):
+            raise RuntimeError("recorder unavailable")
+
+    recorder = types.ModuleType("homeassistant.components.recorder")
+    recorder.get_instance = lambda hass: _RecorderInstance()
+    recorder.history = types.SimpleNamespace(get_significant_states=lambda *a, **k: {})
+    components = sys.modules["homeassistant.components"]
+    monkeypatch.setattr(components, "__path__", [], raising=False)
+    monkeypatch.setattr(components, "recorder", recorder, raising=False)
+    monkeypatch.setitem(sys.modules, "homeassistant.components.recorder", recorder)
+
+    result = await websocket._get_area_sparklines(
+        fake_hass, {"living": {"temp": "sensor.room_temperature"}}
+    )
+
+    assert result == {}
+
+
+async def test_ws_get_activity_log_formats_entries_and_falls_back_on_bad_timestamp(
+    fake_hass, monkeypatch,
+):
+    websocket = _load_websocket_module()
+    calls = []
+    entries = [
+        {
+            "timestamp": "2026-04-23T05:30:00",
+            "urgency": "high",
+            "entity_id": "binary_sensor.front_door",
+            "message": "Front door opened",
+            "source": "observer",
+        },
+        {
+            "timestamp": "bad timestamp",
+            "source": "briefing",
+            "message": "Morning summary",
+        },
+    ]
+    database = types.ModuleType("jc.database")
+
+    def _get_recent_activity(*, hours, limit):
+        calls.append((hours, limit))
+        return entries
+
+    database.get_recent_activity = _get_recent_activity
+    monkeypatch.setitem(sys.modules, "jc.database", database)
+    connection = _Conn()
+
+    await websocket.ws_get_activity_log(
+        fake_hass, connection, {"id": 12, "hours": 6, "limit": 8}
+    )
+
+    assert calls == [(6, 8)]
+    assert connection.error is None
+    assert connection.result == (12, {
+        "entries": [
+            {
+                "ts": "05:30",
+                "urgency": "high",
+                "tag": "FRONT_DOOR",
+                "msg": "Front door opened",
+                "source": "observer",
+            },
+            {
+                "ts": "bad t",
+                "urgency": "low",
+                "tag": "BRIEFING",
+                "msg": "Morning summary",
+                "source": "briefing",
+            },
+        ],
+    })
+
+
+async def test_ws_get_activity_log_reports_database_error(fake_hass, monkeypatch):
+    websocket = _load_websocket_module()
+    database = types.ModuleType("jc.database")
+
+    def _raise(*args, **kwargs):
+        raise RuntimeError("activity store unavailable")
+
+    database.get_recent_activity = _raise
+    monkeypatch.setitem(sys.modules, "jc.database", database)
+    connection = _Conn()
+
+    await websocket.ws_get_activity_log(
+        fake_hass, connection, {"id": 13, "hours": 24, "limit": 50}
+    )
+
+    assert connection.result is None
+    assert connection.error == (
+        13, "activity_log_failed", "activity store unavailable"
+    )
+
+
+def test_get_runtime_json_obeys_config_precedence_and_json_fallback(
+    fake_hass, monkeypatch,
+):
+    websocket = _load_websocket_module()
+    entry = types.SimpleNamespace(entry_id="entry-1")
+    fake_hass.data = {
+        websocket.DOMAIN: {
+            entry.entry_id: {
+                "runtime_config": {
+                    "runtime_json": '{"source": "runtime"}',
+                    "runtime_dict": {"source": "runtime"},
+                    "invalid_runtime": "{",
+                },
+            },
+        },
+    }
+    persistent = {
+        "persistent_json": '{"source": "persistent"}',
+        "invalid_persistent": "not-json",
+    }
+    options = {"options_json": '["entry option"]', "invalid_options": "["}
+    jarvis_config = types.ModuleType("jc.jarvis_config")
+    jarvis_config.get = lambda key: persistent.get(key)
+    monkeypatch.setitem(sys.modules, "jc.jarvis_config", jarvis_config)
+    monkeypatch.setattr(sys.modules["jc"], "jarvis_config", jarvis_config, raising=False)
+    monkeypatch.setattr(
+        websocket,
+        "_entry_opt",
+        lambda entry, key, default=None: options.get(key, default),
+    )
+
+    assert websocket._get_runtime_json(fake_hass, entry, "runtime_json", None) == {
+        "source": "runtime",
+    }
+    assert websocket._get_runtime_json(fake_hass, entry, "runtime_dict", None) == {
+        "source": "runtime",
+    }
+    assert websocket._get_runtime_json(fake_hass, entry, "persistent_json", None) == {
+        "source": "persistent",
+    }
+    assert websocket._get_runtime_json(fake_hass, entry, "options_json", None) == [
+        "entry option",
+    ]
+    assert websocket._get_runtime_json(fake_hass, entry, "invalid_persistent", None) == "not-json"
+    assert websocket._get_runtime_json(fake_hass, entry, "invalid_options", "fallback") == "fallback"
+    assert websocket._get_runtime_json(fake_hass, entry, "invalid_runtime", "fallback") == "fallback"
+    assert websocket._get_runtime_json(fake_hass, None, "missing", "fallback") == "fallback"
+
+
+def test_get_runtime_str_obeys_runtime_persistent_and_options_precedence(
+    fake_hass, monkeypatch,
+):
+    websocket = _load_websocket_module()
+    entry = types.SimpleNamespace(entry_id="entry-2")
+    fake_hass.data = {
+        websocket.DOMAIN: {
+            entry.entry_id: {"runtime_config": {"value": 0}},
+        },
+    }
+    persistent = {"persistent_value": 12}
+    options = {"option_value": False}
+    jarvis_config = types.ModuleType("jc.jarvis_config")
+    jarvis_config.get = lambda key: persistent.get(key)
+    monkeypatch.setitem(sys.modules, "jc.jarvis_config", jarvis_config)
+    monkeypatch.setattr(sys.modules["jc"], "jarvis_config", jarvis_config, raising=False)
+    monkeypatch.setattr(
+        websocket,
+        "_entry_opt",
+        lambda entry, key, default=None: options.get(key, default),
+    )
+
+    assert websocket._get_runtime_str(fake_hass, entry, "value", "default") == "0"
+    assert websocket._get_runtime_str(fake_hass, entry, "persistent_value", "default") == "12"
+    assert websocket._get_runtime_str(fake_hass, entry, "option_value", "default") == "False"
+    assert websocket._get_runtime_str(fake_hass, None, "missing", "default") == "default"
+
+
+def test_format_uptime_handles_seconds_minutes_hours_and_days():
+    websocket = _load_websocket_module()
+
+    assert websocket._format_uptime(59.9) == "59s"
+    assert websocket._format_uptime(60) == "1m 0s"
+    assert websocket._format_uptime(3600) == "1h 0m"
+    assert websocket._format_uptime(86400) == "1d 0h"
+
+
+def test_downsample_preserves_small_inputs_and_evenly_selects_large_inputs():
+    websocket = _load_websocket_module()
+    values = [float(value) for value in range(10)]
+
+    assert websocket._downsample(values[:2], 2) == values[:2]
+    assert websocket._downsample(values, 0) == values
+    assert websocket._downsample(values, 3) == [0.0, 3.0, 6.0]
