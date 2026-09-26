@@ -57,11 +57,20 @@ def test_advance_repeating_supports_weekly_hourly_and_invalid(load, tmp_path, mo
     reminders = load("reminders")
     monkeypatch.setattr(reminders, "DB_PATH", tmp_path / "reminders.db")
     import datetime
-    for repeat, delta in (("weekly", 7), ("hourly", 1)):
-        rid = reminders.add_reminder("x", datetime.datetime(2026, 1, 1), repeat=repeat)
-        row = reminders.get_due_reminders(datetime.datetime(2026, 1, 2))
-        reminders._advance_repeating({"id": rid, "trigger_at": "2026-01-01T00:00:00", "repeat": repeat})
-        assert delta > 0 and row
+    trigger = datetime.datetime(2026, 1, 1)
+    for repeat, delta in (
+        ("weekly", datetime.timedelta(days=7)),
+        ("hourly", datetime.timedelta(hours=1)),
+    ):
+        rid = reminders.add_reminder("x", trigger, repeat=repeat)
+        reminders._advance_repeating(
+            {"id": rid, "trigger_at": trigger.isoformat(), "repeat": repeat}
+        )
+        with reminders._connect() as connection:
+            row = connection.execute(
+                "SELECT trigger_at FROM reminders WHERE id = ?", (rid,)
+            ).fetchone()
+        assert row["trigger_at"] == (trigger + delta).isoformat()
     reminders._advance_repeating({"id": 1, "trigger_at": "bad", "repeat": "daily"})
     reminders._advance_repeating({"id": 1, "trigger_at": "2026-01-01T00:00:00", "repeat": "monthly"})
 
