@@ -1,6 +1,7 @@
 """Tests for self-scheduled follow-ups (v6.38.0) — the agent queuing work for
 its future self, and the core tick executing it."""
 from datetime import datetime, timedelta
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -12,6 +13,20 @@ def fu(load, tmp_path, monkeypatch):
     mod = load("followups")
     monkeypatch.setattr(mod, "DB_PATH", str(tmp_path / "patterns.db"))
     return mod
+
+
+def test_connect_closes_connection_when_schema_setup_fails(fu, monkeypatch):
+    connection = MagicMock()
+    schema_error = fu.sqlite3.OperationalError("schema failed")
+    connection.execute.side_effect = schema_error
+    monkeypatch.setattr(
+        fu.sqlite3, "connect", MagicMock(return_value=connection)
+    )
+
+    with pytest.raises(fu.sqlite3.OperationalError, match="schema failed"):
+        fu._connect(fu.DB_PATH)
+
+    connection.close.assert_called_once_with()
 
 
 def test_schedule_and_pending_roundtrip(fu):

@@ -32,19 +32,23 @@ STATUSES = ("pending", "done", "cancelled", "failed")
 
 def _connect(db_path: str) -> sqlite3.Connection:
     conn = sqlite3.connect(db_path, factory=ClosingConnection)
-    conn.row_factory = sqlite3.Row
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS followups (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            created_ts TEXT NOT NULL,
-            due_ts TEXT NOT NULL,
-            instruction TEXT NOT NULL,
-            context TEXT DEFAULT '',
-            status TEXT NOT NULL DEFAULT 'pending',
-            result TEXT DEFAULT ''
-        )""")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_fu_due ON followups(status, due_ts)")
-    return conn
+    try:
+        conn.row_factory = sqlite3.Row
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS followups (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_ts TEXT NOT NULL,
+                due_ts TEXT NOT NULL,
+                instruction TEXT NOT NULL,
+                context TEXT DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'pending',
+                result TEXT DEFAULT ''
+            )""")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_fu_due ON followups(status, due_ts)")
+        return conn
+    except Exception:
+        conn.close()
+        raise
 
 
 def _now(now: Optional[datetime]) -> datetime:
