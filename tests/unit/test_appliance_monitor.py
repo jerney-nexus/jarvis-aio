@@ -466,4 +466,3 @@ async def test_announce_done_suppresses_oven_and_untrusted_guess(
         "sensor.unknown_power", "Unknown", monitor.ApplianceType.WASHER,
         discovery_method="fingerprint:500W")
     await monitor._announce_done(guessed, "washer")
-
