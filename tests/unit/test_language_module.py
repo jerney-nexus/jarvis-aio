@@ -51,6 +51,26 @@ def test_missing_language_is_safe(language):
     assert language.language_directive(types.SimpleNamespace()) == ""
 
 
+def test_request_language_overrides_global(language):
+    # A German voice satellite in a Russian household must be answered in German,
+    # not Russian (discussion #55: wrong-language, garbled voice replies).
+    assert language.configured_language(_hass("ru"), "de-DE") == "de"
+    d = language.language_directive(_hass("ru"), "de")
+    assert "German" in d and "Russian" not in d
+
+
+def test_request_language_falls_back_to_global(language):
+    # No per-request language → the household's global language still applies.
+    assert language.configured_language(_hass("ru"), None) == "ru"
+    assert "Russian" in language.language_directive(_hass("ru"), None)
+
+
+def test_english_request_on_nonenglish_home_gets_nothing(language):
+    # A request that arrives in English is answered in English even when the
+    # household's global language is not — the request language wins.
+    assert language.language_directive(_hass("de"), "en") == ""
+
+
 def _load_real_directive_helper():
     """Load the real directive_helper into jc.directive_helper, past conftest's
     lightweight stub, restoring the stub afterwards so other tests are

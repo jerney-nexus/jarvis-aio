@@ -26,40 +26,51 @@ _LANG_NAMES = {
 }
 
 
-def configured_language(hass) -> str:
-    """Home Assistant's configured language as a primary ISO-639 subtag
-    (e.g. ``"de"`` for ``"de-DE"``). ``"en"`` when unset or on error. Never
+def configured_language(hass, lang: str | None = None) -> str:
+    """The language JARVIS should answer in, as a primary ISO-639 subtag
+    (e.g. ``"de"`` for ``"de-DE"``), ``"en"`` when unset or on error.
+
+    ``lang`` is an optional per-request override — the conversation / voice
+    pipeline language (``user_input.language``). When given it wins over Home
+    Assistant's global setting, so a request coming through a German satellite
+    is answered in German even in a household whose global language is Russian
+    (the case that produced wrong-language, garbled voice replies). Never
     raises."""
     try:
-        return (getattr(hass.config, "language", None) or "en").split("-")[0].lower()
+        raw = lang or getattr(hass.config, "language", None) or "en"
+        return (raw or "en").split("-")[0].lower()
     except Exception:
         return "en"
 
 
-def language_name(hass) -> str:
-    """The display name of the home's configured language (e.g. ``"German"``),
-    or ``""`` for English / unset — i.e. non-empty exactly when JARVIS should
-    steer output to a non-English language. Never raises."""
-    lang = configured_language(hass)
-    if not lang or lang == "en":
+def language_name(hass, lang: str | None = None) -> str:
+    """The display name of the effective language (e.g. ``"German"``), or ``""``
+    for English / unset — i.e. non-empty exactly when JARVIS should steer output
+    to a non-English language. ``lang`` overrides the global setting as in
+    :func:`configured_language`. Never raises."""
+    code = configured_language(hass, lang)
+    if not code or code == "en":
         return ""
-    return _LANG_NAMES.get(lang, lang)
+    return _LANG_NAMES.get(code, code)
 
 
-def language_directive(hass) -> str:
-    """A system-prompt block steering output to the home's configured language.
+def language_directive(hass, lang: str | None = None) -> str:
+    """A system-prompt block steering output to the effective language.
 
     Uses Home Assistant's ``language`` so a non-English household gets JARVIS's
-    output in its own language. Returns ``""`` for English installs (which are
-    therefore completely unaffected). The user's own input language still wins
-    if they write in something else. Never raises.
+    output in its own language. ``lang`` is an optional per-request override
+    (the conversation / voice-pipeline language) that wins over the global
+    setting, so replies follow the language the request actually came in on.
+    Returns ``""`` for English (which is therefore completely unaffected). The
+    user's own input language still wins if they write in something else. Never
+    raises.
     """
-    lname = language_name(hass)
+    lname = language_name(hass, lang)
     if not lname:
         return ""
     return (
         f"## Language\n"
-        f"Respond in {lname} by default — this household's configured language "
-        f"is {lname}. If the user writes to you in another language, reply in "
-        f"that language instead. Keep entity names and proper nouns unchanged.\n"
+        f"Respond in {lname} by default. If the user clearly writes to you in "
+        f"another language, reply in that language instead. Keep entity names and "
+        f"proper nouns unchanged.\n"
     )

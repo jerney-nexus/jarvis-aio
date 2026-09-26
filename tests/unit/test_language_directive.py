@@ -39,3 +39,12 @@ def test_english_gets_nothing(agent):
 def test_missing_language_is_safe(agent):
     assert agent._language_directive(_hass(None)) == ""
     assert agent._language_directive(types.SimpleNamespace()) == ""
+
+
+def test_request_language_overrides_global(agent):
+    # The per-request (voice pipeline) language wins over the global setting, so
+    # a German request in a Russian household is answered in German (#55).
+    d = agent._language_directive(_hass("ru"), "de")
+    assert "German" in d and "Russian" not in d
+    # Without a request language, the global language still applies.
+    assert "Russian" in agent._language_directive(_hass("ru"))
