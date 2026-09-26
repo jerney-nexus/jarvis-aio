@@ -1,9 +1,22 @@
 """Tests for local-mind history, decision, and verbalization behavior."""
+import gc
 import sqlite3
 import sys
 import types
 
 import pytest
+
+
+def _close_sqlite_connections():
+    connections = [
+        obj for obj in gc.get_objects() if isinstance(obj, sqlite3.Connection)
+    ]
+    for conn in connections:
+        try:
+            conn.close()
+        except Exception:
+            pass
+    gc.collect()
 
 
 @pytest.fixture
@@ -129,7 +142,8 @@ def test_connect_failure_and_empty_history_database(mind, tmp_path, monkeypatch)
     assert mind._days_cache[1] == 0.0
 
     broken_path = tmp_path / "missing-table.db"
-    sqlite3.connect(broken_path).close()
+    with sqlite3.connect(broken_path) as conn:
+        pass
     monkeypatch.setattr(mind, "DB_PATH", str(broken_path))
     monkeypatch.setattr(mind, "_days_cache", (0.0, 0.0))
     assert mind._data_days() == 0.0
@@ -145,6 +159,8 @@ def test_history_cache_evicts_old_entries_after_limit(mind, monkeypatch):
     assert len(mind._hist_cache) == 601
     assert ("sensor.old", "0", 0) not in mind._hist_cache
     assert ("sensor.old", "200", 0) in mind._hist_cache
+
+    _close_sqlite_connections()
 
 
 def test_note_event_detects_flapping_and_expires_old_events(mind, monkeypatch):
