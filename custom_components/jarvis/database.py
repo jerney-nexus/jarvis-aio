@@ -52,6 +52,7 @@ _last_error: Optional[str] = None   # last connect/schema failure, for diagnosti
 
 def _connect() -> sqlite3.Connection:
     global _last_error
+    conn: sqlite3.Connection | None = None
     try:
         DB_PATH.parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(str(DB_PATH), factory=ClosingConnection)
@@ -64,6 +65,8 @@ def _connect() -> sqlite3.Connection:
         # A schema/migration failure is NOT swallowed silently — it's logged and
         # retained so diagnostics can report the store as degraded. Callers still
         # handle the raised error for the individual operation.
+        if conn is not None:
+            conn.close()
         _last_error = f"{type(exc).__name__}: {exc}"
         _LOGGER.error("conversation DB connect/schema failed: %s", exc)
         raise
