@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import sqlite3
 import time
 from collections import Counter, defaultdict
@@ -222,6 +223,60 @@ def normalize_suggestion_automation(stored_yaml: str) -> dict:
     if mode in ("single", "restart", "queued", "parallel"):
         out["mode"] = mode
     return out
+
+
+# entity_id tokens look like ``domain.object_id`` — used to swap raw ids for
+# friendly names in human-readable descriptions.
+_ENTITY_ID_RE = re.compile(r"[a-z_]+\.[a-z0-9_]+")
+
+
+def _humanize_entities(text: str, name_map: dict) -> str:
+    """Replace every ``domain.object_id`` in ``text`` with its friendly name
+    (when known), so learned-pattern descriptions read for humans."""
+    if not text or not name_map:
+        return text
+    return _ENTITY_ID_RE.sub(lambda m: name_map.get(m.group(0), m.group(0)), text)
+
+
+def suggestion_signature(stored_yaml: str) -> str:
+    """A stable identity for a learned automation, for de-duplication.
+
+    Built from the trigger + actuating action structure (entity ids, services,
+    and the trigger's own discriminator — the time, threshold, or confirm
+    sensor), and deliberately independent of:
+      • the volatile occurrence count carried in the description, and
+      • measured timing (action delays and confirmation timeouts), and
+      • the friendly-name display in the alias.
+    Two runs that learn the same behavior therefore produce the same signature,
+    so the suggestion is stored once and re-detections refresh it in place.
+    Returns "" for non-installable payloads (handled by the actionability gate).
+    """
+    norm = normalize_suggestion_automation(stored_yaml or "")
+    if not norm.get("installable"):
+        return ""
+    _KEEP = ("trigger", "platform", "entity_id", "to", "at",
+             "above", "below", "zone", "event")
+    trigs = []
+    for t in norm.get("trigger") or []:
+        if isinstance(t, dict):
+            trigs.append({k: t.get(k) for k in _KEEP if t.get(k) is not None})
+    acts = []
+    for a in norm.get("action") or []:
+        if not isinstance(a, dict) or "delay" in a:
+            continue  # drop bare delays — measured timing, not identity
+        if "wait_for_trigger" in a:
+            ents = sorted(
+                w.get("entity_id") for w in (a.get("wait_for_trigger") or [])
+                if isinstance(w, dict) and w.get("entity_id"))
+            acts.append({"wait_for": ents})  # keep confirm entity, drop timeout
+            continue
+        acts.append({
+            "service": a.get("action") or a.get("service"),
+            "entity_id": a.get("entity_id") or (a.get("target") or {}).get("entity_id"),
+        })
+    payload = {"trigger": trigs, "action": acts,
+               "condition": norm.get("condition"), "mode": norm.get("mode")}
+    return json.dumps(payload, sort_keys=True, default=str)
 
 
 def service_for(entity_id: str, state: str) -> Optional[dict]:
@@ -946,10 +1001,33 @@ class PatternAnalyzer:
         except Exception as exc:
             _LOGGER.warning("Pattern analysis error: %s", exc)
 
+        # Resolve entity_id -> friendly name on the event loop (HA state must
+        # not be read from the executor threads that _store_suggestion runs on),
+        # so learned automations are named for humans, not raw entity ids.
+        name_map: dict = {}
+        try:
+            for st in hass.states.async_all():
+                fn = st.attributes.get("friendly_name")
+                if fn:
+                    name_map[st.entity_id] = str(fn)
+        except Exception:
+            name_map = {}
+        self._entity_names = name_map
+        # Rewrite entity ids inside the human-readable descriptions too.
+        for p in patterns:
+            try:
+                p.description = _humanize_entities(p.description, name_map)
+            except Exception:
+                pass
+
         # Clear any pending suggestions that aren't actionable automations —
         # legacy rows stored before the actionability filter, so the review list
         # only ever shows real trigger+action automations.
         await hass.async_add_executor_job(self._purge_non_actionable_suggestions)
+        # Collapse any duplicate pending suggestions that earlier versions stored
+        # (dedup used to key on the count-bearing description, so each analysis
+        # pass inserted a fresh near-identical row as the count grew).
+        await hass.async_add_executor_job(self._dedupe_pending_suggestions)
 
         # Store high-confidence patterns as suggestions
         new_suggestions = 0
@@ -1886,6 +1964,48 @@ class PatternAnalyzer:
             conn.close()
         return removed
 
+    def _dedupe_pending_suggestions(self) -> int:
+        """Collapse duplicate pending suggestions that share a structural
+        signature, keeping the strongest one (highest confidence, then count,
+        then newest). Earlier versions keyed de-dup on the count-bearing
+        description, so a single learned automation could accumulate many
+        near-identical pending rows; this reconciles those. Never raises."""
+        try:
+            conn = sqlite3.connect(self._db, factory=ClosingConnection)
+        except Exception:
+            return 0
+        removed = 0
+        try:
+            rows = conn.execute(
+                "SELECT id, automation_yaml, confidence, pattern_count, created "
+                "FROM suggestions WHERE status = 'pending'"
+            ).fetchall()
+            best: dict = {}       # signature -> (rank_key, id)
+            losers: list = []
+            for rid, yml, conf, pcnt, created in rows:
+                sig = suggestion_signature(yml or "")
+                if not sig:
+                    continue
+                rank = (conf or 0.0, pcnt or 0, created or "")
+                cur = best.get(sig)
+                if cur is None:
+                    best[sig] = (rank, rid)
+                elif rank > cur[0]:
+                    losers.append(cur[1])
+                    best[sig] = (rank, rid)
+                else:
+                    losers.append(rid)
+            for rid in losers:
+                conn.execute("DELETE FROM suggestions WHERE id = ?", (rid,))
+                removed += 1
+            if removed:
+                conn.commit()
+        except Exception:
+            pass
+        finally:
+            conn.close()
+        return removed
+
     def _store_suggestion(self, pattern: DetectedPattern) -> bool:
         """Store a pattern as a suggestion in the DB. Returns True if new.
 
@@ -1897,18 +2017,30 @@ class PatternAnalyzer:
         auto_yaml = self._generate_automation(pattern)
         if not normalize_suggestion_automation(auto_yaml).get("installable"):
             return False
+        sig = suggestion_signature(auto_yaml)
         try:
             conn = sqlite3.connect(self._db, factory=ClosingConnection)
-            # Check if similar suggestion already exists
-            existing = conn.execute(
-                "SELECT id FROM suggestions WHERE description = ?",
-                (pattern.description,)
-            ).fetchone()
+            # De-dup on a stable structural signature rather than the description
+            # (which carries a volatile "N times in 30 days" count that used to
+            # defeat the check and spawn a fresh row on every pass). A re-detected
+            # automation refreshes the existing row in place — including its alias
+            # and description, so older entity-id-named rows migrate to friendly
+            # names — instead of being stored again.
+            existing = None
+            for rid, ryml in conn.execute(
+                "SELECT id, automation_yaml FROM suggestions WHERE pattern_type = ?",
+                (pattern.pattern_type,),
+            ).fetchall():
+                if sig and suggestion_signature(ryml or "") == sig:
+                    existing = (rid,)
+                    break
             if existing:
-                # Update occurrence count and confidence
+                # Refresh confidence, count, and the human-facing name/description.
                 conn.execute(
-                    "UPDATE suggestions SET confidence = ?, pattern_count = ? WHERE id = ?",
-                    (pattern.confidence, pattern.occurrences, existing[0]),
+                    "UPDATE suggestions SET confidence = ?, pattern_count = ?, "
+                    "description = ?, automation_yaml = ? WHERE id = ?",
+                    (pattern.confidence, pattern.occurrences, pattern.description,
+                     auto_yaml, existing[0]),
                 )
                 conn.commit()
                 conn.close()
@@ -1951,6 +2083,21 @@ class PatternAnalyzer:
                 conn.close()
             except UnboundLocalError:
                 pass
+
+    def _friendly(self, entity_id: str) -> str:
+        """Friendly name for an ``entity_id`` for human-readable aliases.
+
+        Reads the ``{entity_id: friendly_name}`` map that :meth:`analyze`
+        captures on the event loop (HA state can't be read from the executor
+        threads that build suggestions). Falls back to a prettified object_id
+        when the entity has no friendly name."""
+        if not entity_id:
+            return entity_id
+        name = (getattr(self, "_entity_names", None) or {}).get(entity_id)
+        if name:
+            return name
+        obj = entity_id.split(".", 1)[-1] if "." in entity_id else entity_id
+        return obj.replace("_", " ").strip().title() or entity_id
 
     # ── Home Assistant trigger / condition taxonomy (roadmap reference) ──────
     # The long-term goal is for JARVIS to learn and emit the FULL range of HA
@@ -2000,7 +2147,8 @@ class PatternAnalyzer:
                              f"{d['state']} around {d['hour']:02d}:00"),
                 }, indent=2)
             auto = {
-                "alias": f"JARVIS Learned: {p.entity_ids[0]} {d['state']} at {d['hour']:02d}:00",
+                "alias": (f"JARVIS Learned: {self._friendly(p.entity_ids[0])} "
+                          f"{d['state']} at {d['hour']:02d}:00"),
                 "trigger": {"platform": "time", "at": f"{d['hour']:02d}:00:00"},
                 "action": svc,
             }
@@ -2051,16 +2199,18 @@ class PatternAnalyzer:
                     })
                     seq_action.append(off_svc)
                     mode = "restart"
+            act_name = self._friendly(action["entity"])
+            trg_name = self._friendly(trigger["entity"])
             if trig.get("platform") == "zone":
                 verb = "leaves" if trig["event"] == "leave" else "arrives"
-                alias = f"JARVIS Learned: {action['entity']} when {trigger['entity']} {verb} home"
+                alias = f"JARVIS Learned: {act_name} when {trg_name} {verb} home"
             elif (trigger["entity"].split(".")[0] if "." in trigger["entity"]
                     else "") == "event":
-                alias = f"JARVIS Learned: {action['entity']} on {trigger['entity']} press"
+                alias = f"JARVIS Learned: {act_name} on {trg_name} press"
             elif until:
-                alias = f"JARVIS Learned: {action['entity']} on {trigger['entity']} until unoccupied"
+                alias = f"JARVIS Learned: {act_name} on {trg_name} until unoccupied"
             else:
-                alias = f"JARVIS Learned: {action['entity']} after {trigger['entity']}"
+                alias = f"JARVIS Learned: {act_name} after {trg_name}"
             auto = {
                 "alias": alias,
                 "trigger": trig,
@@ -2088,8 +2238,9 @@ class PatternAnalyzer:
             trig = {"platform": "numeric_state",
                     "entity_id": d["trigger_sensor"], d["op"]: d["threshold"]}
             auto = {
-                "alias": (f"JARVIS Learned: {action['entity']} when "
-                          f"{d['trigger_sensor']} {d['op']} {d['threshold']:g}"),
+                "alias": (f"JARVIS Learned: {self._friendly(action['entity'])} when "
+                          f"{self._friendly(d['trigger_sensor'])} {d['op']} "
+                          f"{d['threshold']:g}"),
                 "trigger": trig,
                 "action": [svc],
             }
@@ -2122,8 +2273,9 @@ class PatternAnalyzer:
             trig = _trigger_for(trg["entity"], trg["state"])
             timeout = _secs_to_hms(min(600, int(d.get("confirm_timeout", 120) or 120)))
             return json.dumps({
-                "alias": (f"JARVIS Learned (review): close {close['entity']} after "
-                          f"{confirm['entity']} confirms"),
+                "alias": (f"JARVIS Learned (review): close "
+                          f"{self._friendly(close['entity'])} after "
+                          f"{self._friendly(confirm['entity'])} confirms"),
                 "description": ("SAFETY-SENSITIVE: closes a cover automatically. "
                                 "Review carefully before enabling."),
                 "trigger": trig,
@@ -2156,7 +2308,8 @@ class PatternAnalyzer:
                     "type": "manual_review",
                 }, indent=2)
             return json.dumps({
-                "alias": f"JARVIS Learned: {d['action_entity']} when {d['trigger_person']} {d['trigger_state']}",
+                "alias": (f"JARVIS Learned: {self._friendly(d['action_entity'])} when "
+                          f"{self._friendly(d['trigger_person'])} {d['trigger_state']}"),
                 "trigger": {
                     "platform": "state",
                     "entity_id": d["trigger_person"],

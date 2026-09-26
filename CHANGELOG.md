@@ -1,3 +1,13 @@
+## [8.2.2] — learned automations are suggested once, and named for humans
+
+**Fixes duplicate suggestions and cryptic suggestion names.** The review list could fill with many nearly-identical "JARVIS Learned" suggestions for the same behavior, and each one's name showed raw entity ids (`close cover.smart_garage_door_2007…_garage_2 after binary_sensor.bay_2_car_occupancy confirms`) instead of the friendly names you see everywhere else.
+
+- **Each learned automation is suggested once.** De-duplication used to key on the suggestion's *description*, which carries a running "*N times in 30 days*" count — so every analysis pass saw a "new" description and stored another near-identical row as the count ticked up. It now keys on a **stable structural signature** (the trigger and the device action, independent of that count, of measured delays/timeouts, and of the display name), so a re-detected pattern refreshes the existing suggestion in place instead of piling up copies. Genuinely different automations (a different time, threshold, or target) still stay separate.
+- **Existing pile-ups are collapsed.** On the next analysis pass, duplicate *pending* suggestions that share a signature are reconciled down to the strongest one (highest confidence), so review lists that already grew large clean themselves up.
+- **Suggestions are named for humans.** Learned-automation names and their descriptions now use each entity's **friendly name** — "*close Garage 2 after Car occupancy confirms*", "*Hall Light after Front Door*" — falling back to a tidied entity name only when no friendly name is set. Older entity-id-named suggestions are relabeled in place as they're re-detected.
+
+No settings change; existing approved automations are untouched.
+
 ## [8.2.1] — close SQLite connections and file handles deterministically
 
 **Fixes unclosed database connections and file handles** (#99, contributed by @PhoenixB). SQLite's context manager commits or rolls back a transaction on exit but does **not** close the connection, so `with sqlite3.connect(...) as conn:` left the handle open — noisy as `ResourceWarning`/`PytestUnraisableExceptionWarning` under Python 3.14, and holding database resources open longer than intended in production.
