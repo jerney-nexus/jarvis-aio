@@ -45,6 +45,20 @@ def test_entity_noise_filter_uses_suffix_and_substrings(observer):
     assert observer._entity_id_looks_noisy("sensor.panel_w") is True
     assert observer._entity_id_looks_noisy("sensor.battery_voltage") is True
     assert observer._entity_id_looks_noisy("sensor.basement_window") is False
+    assert observer._entity_id_looks_noisy("sensor.meter_total_kwh") is True
+
+
+def test_review_tier_accepts_local_and_configured_custom_providers(observer, monkeypatch):
+    from jc import const
+
+    monkeypatch.setattr(
+        const, "resolve_provider_base_url",
+        lambda config, provider: config.get("custom_base_url") if provider == "custom" else None,
+    )
+    assert observer._review_tier_is_configured({"review_provider": "ollama"})
+    assert observer._review_tier_is_configured({
+        "review_provider": "custom", "custom_base_url": "http://llm.local",
+    })
 
 
 @pytest.mark.parametrize("entity_id", ["", "light.kitchen", "sensor.temperature", "binary_sensor.front_door"])
@@ -96,6 +110,46 @@ def test_prefilter_fails_open_when_exclusion_lookup_errors(observer, fake_hass, 
     assert not observer._should_pre_filter(_changed_event())
 
 
+def test_prefilter_handles_missing_states_and_unreadable_timestamps(observer):
+    assert observer._should_pre_filter(types.SimpleNamespace(data={
+        "entity_id": "sensor.smoke", "new_state": None,
+    }))
+    assert observer._should_pre_filter(types.SimpleNamespace(data={
+        "entity_id": "binary_sensor.door", "new_state": _event().data["new_state"],
+    }))
+    assert observer._should_pre_filter(types.SimpleNamespace(data={
+        "entity_id": "binary_sensor.door",
+        "old_state": types.SimpleNamespace(state="off"),
+        "new_state": types.SimpleNamespace(state="on", attributes={}),
+    })) is False
+
+
+def test_runtime_config_invalid_values_fall_back_to_entry_settings(observer, fake_hass):
+    from jc.const import DOMAIN
+
+    observer._STATE.hass = fake_hass
+    observer._STATE.config = {
+        "classifier_rate_limit": "4", "observer_group_debounce": "bad",
+    }
+    fake_hass.data[DOMAIN] = {"entry": {"runtime_config": {
+        "classifier_rate_limit": "bad", "observer_group_debounce": "also-bad",
+    }}}
+    assert observer._effective_rate_limit() == 4
+    assert observer._group_debounce_s() == observer.GROUP_DEBOUNCE_S
+    observer._STATE.hass = None
+    assert observer._effective_rate_limit() == 4
+
+
+def test_group_debounce_runtime_and_entry_precedence(observer, fake_hass):
+    from jc.const import DOMAIN
+
+    observer._STATE.hass = fake_hass
+    observer._STATE.config = {"observer_group_debounce": 25}
+    assert observer._group_debounce_s() == 25
+    fake_hass.data[DOMAIN] = {"entry": {"runtime_config": {"observer_group_debounce": "12.5"}}}
+    assert observer._group_debounce_s() == 12.5
+
+
 def test_rate_limit_config_precedence_expiry_and_unlimited(observer, fake_hass, monkeypatch):
     from jc.const import DOMAIN
 
@@ -125,6 +179,35 @@ def test_debounce_and_recent_context_include_camera_records(observer, monkeypatc
     assert "⚠" in observer.get_recent_context()
     now += 700
     assert observer.get_recent_context(300) == "quiet — no notable recent activity"
+
+
+def test_recent_context_formats_state_age_and_limits_output(observer, monkeypatch):
+    now = [30_000]
+    monkeypatch.setattr(observer.time, "time", lambda: now[0])
+    observer._STATE.recent_events.clear()
+    observer._STATE.recent_events.append({
+        "ts": now[0] - 125, "fname": "Front Door", "old": "closed",
+        "new": "open", "area": "entry",
+    })
+    assert "2m ago" in observer.get_recent_context()
+    assert "[entry] Front Door: closed → open" in observer.get_recent_context()
+    for index in range(16):
+        observer._STATE.recent_events.append({
+            "ts": now[0], "kind": "camera", "camera": f"Camera {index}",
+            "summary": "motion", "notable": False,
+        })
+    context = observer.get_recent_context()
+    assert "[entry] Front Door: closed → open" not in context
+    assert "Camera 0" not in context
+    assert "Camera 1" in context
+
+
+def test_record_camera_event_uses_defaults_and_boolean_notable(observer):
+    observer.record_camera_event("Drive", "vehicle", notable=1)
+    item = observer._STATE.recent_events[-1]
+    assert item["category"] == "other"
+    assert item["notable"] is True
+    assert item["area"] is None
 
 
 def test_record_for_context_skips_missing_and_keeps_area(observer, fake_hass, monkeypatch):
@@ -282,6 +365,27 @@ async def test_state_handler_warns_once_at_rate_limit_then_clears(observer, fake
     fake_hass.close_pending()
 
 
+@pytest.mark.asyncio
+async def test_state_handler_exits_for_static_filter_group_and_entity_debounce(
+    observer, fake_hass, monkeypatch,
+):
+    from jc.const import DOMAIN
+
+    fake_hass.data[DOMAIN] = {"entry": {"runtime_config": {"cognition_enabled": False}}}
+    observer._STATE.hass = fake_hass
+    observer._STATE.running = True
+    monkeypatch.setattr(observer, "_should_pre_filter", lambda _event: True)
+    observer._on_state_changed(_changed_event())
+    monkeypatch.setattr(observer, "_should_pre_filter", lambda _event: False)
+    monkeypatch.setattr(observer, "_group_debounce_s", lambda: 90)
+    monkeypatch.setattr(observer, "_group_debounced", lambda *_args: True)
+    observer._on_state_changed(_changed_event("binary_sensor.alarm_zone_1"))
+    monkeypatch.setattr(observer, "_group_debounced", lambda *_args: False)
+    monkeypatch.setattr(observer, "_debounced", lambda _entity, interval: interval == observer.DEBOUNCE_MOTION_S)
+    observer._on_state_changed(_changed_event(device_class="motion"))
+    assert fake_hass._tasks == []
+
+
 def _pipeline(observer, monkeypatch, *, worth=True, speak=True, sleeping=False,
               mode="broadcast", targets=None, announcements=True, urgency="medium",
               reserve=True, review_provider=None):
@@ -344,6 +448,19 @@ async def test_process_event_logs_unworthy_and_returns(observer, fake_hass, monk
     await observer._process_event(_event())
     assert activity[0]["category"] == "classified"
     assert "not worth considering" in activity[0]["message"]
+
+
+@pytest.mark.asyncio
+async def test_process_event_ignores_incomplete_event_and_activity_store_errors(
+    observer, fake_hass, monkeypatch,
+):
+    observer._STATE.hass = fake_hass
+    await observer._process_event(types.SimpleNamespace(data={"new_state": None}))
+    _pipeline(observer, monkeypatch)
+    db = sys.modules["jc.database"]
+    db.save_activity = lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("db unavailable"))
+    await observer._process_event(_event())
+    assert observer._STATE.review_count == 1
 
 
 @pytest.mark.asyncio
@@ -423,6 +540,35 @@ async def test_process_event_review_veto_and_critical_downgrade(observer, fake_h
 
 
 @pytest.mark.asyncio
+async def test_process_event_uses_home_presence_and_quiet_hours_routing(observer, fake_hass, monkeypatch):
+    recorded, notifications, _ = _pipeline(observer, monkeypatch, urgency="high")
+    fake_hass.states.set("device_tracker.phone", "home")
+    observer._STATE.hass = fake_hass
+    monkeypatch.setattr(observer.sleep_detection, "_in_quiet_hours", lambda *_args: True)
+    routed = []
+    monkeypatch.setattr(observer.audio_routing, "observer_speak_target", lambda *_a, **kwargs: (
+        routed.append(kwargs) or ([], "notify_only")))
+    await observer._process_event(_event())
+    assert routed[0]["is_sleeping"] is True
+    assert notifications == [("Door opened", "high")]
+    assert recorded[0][1]["was_spoken"] is False
+
+
+@pytest.mark.asyncio
+async def test_process_event_allows_classifier_critical_through_sleep(observer, fake_hass, monkeypatch):
+    recorded, _, _ = _pipeline(observer, monkeypatch, sleeping=True)
+    monkeypatch.setattr(observer.classifier, "classify", _async_result({
+        "worth_considering": True, "urgency": "critical", "category": "safety",
+    }))
+    monkeypatch.setattr(observer.reasoning_loop, "decide", _async_result({
+        "speak": True, "message": "Smoke detected", "urgency": "critical",
+    }))
+    observer._STATE.hass = fake_hass
+    await observer._process_event(_event())
+    assert recorded[0][1]["urgency"] == "critical"
+
+
+@pytest.mark.asyncio
 async def test_process_event_disabled_announcements_records_and_notifies(observer, fake_hass, monkeypatch):
     recorded, notifications, _ = _pipeline(observer, monkeypatch, announcements=False, urgency="critical")
     observer._STATE.hass = fake_hass
@@ -479,6 +625,25 @@ async def test_send_notification_runtime_config_payload_and_invalid_service(obse
     before = len(fake_hass.service_calls)
     await observer._send_notification("no destination", urgency="low")
     assert len(fake_hass.service_calls) == before
+
+
+@pytest.mark.asyncio
+async def test_send_notification_invalid_service_and_service_error_are_contained(
+    observer, fake_hass, monkeypatch, caplog,
+):
+    observer._STATE.hass = fake_hass
+    observer._STATE.config = {"notify_service": "not-a-service"}
+    await observer._send_notification("hello", urgency="low")
+    assert "notification failed" in caplog.text
+
+    observer._STATE.config["notify_service"] = "notify.phone"
+
+    async def fail(*_args, **_kwargs):
+        raise RuntimeError("notify failed")
+
+    monkeypatch.setattr(fake_hass.services, "async_call", fail)
+    await observer._send_notification("hello", urgency="critical")
+    assert "notification failed" in caplog.text
 
 
 @pytest.mark.asyncio
