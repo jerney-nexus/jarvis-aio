@@ -2,6 +2,7 @@
 time: lifecycle, the goal prompt, quiet-while-working engagement, closure
 announcements, deadlines, and the safety valves."""
 import sqlite3
+from contextlib import closing
 import sys
 import types
 from datetime import datetime, timedelta
@@ -211,8 +212,9 @@ async def test_runner_error_keeps_goal_active(goals, fake_hass, quiet_activity):
 
 async def test_run_budget_force_fails(goals, fake_hass, quiet_activity):
     gid = _mk(goals)["id"]
-    with sqlite3.connect(goals.DB_PATH) as c:
+    with closing(sqlite3.connect(goals.DB_PATH)) as c:
         c.execute("UPDATE goals SET runs=? WHERE id=?", (goals.MAX_RUNS, gid))
+        c.commit()
     async def runner(prompt, ctx):
         raise AssertionError("budget-exhausted goal must not run")
     actions = await goals.async_process_due(fake_hass, {}, runner, now=NOW,

@@ -21,10 +21,13 @@ backup = _load_backup()
 def test_backup_restore_roundtrip(tmp_path):
     cfg = str(tmp_path)
     os.makedirs(os.path.join(cfg, "jarvis"))
-    open(os.path.join(cfg, "jarvis", "knowledge.db"), "w").write("KNOW")
-    open(os.path.join(cfg, "jarvis.db"), "w").write("FTS")
+    with open(os.path.join(cfg, "jarvis", "knowledge.db"), "w") as file:
+        file.write("KNOW")
+    with open(os.path.join(cfg, "jarvis.db"), "w") as file:
+        file.write("FTS")
     os.makedirs(os.path.join(cfg, "jarvis_memory"))
-    open(os.path.join(cfg, "jarvis_memory", "chroma.sqlite3"), "w").write("CHROMA")
+    with open(os.path.join(cfg, "jarvis_memory", "chroma.sqlite3"), "w") as file:
+        file.write("CHROMA")
 
     arc = backup.create_backup(cfg)
     assert os.path.exists(arc) and arc.endswith(".tar.gz")
@@ -34,9 +37,12 @@ def test_backup_restore_roundtrip(tmp_path):
     os.remove(os.path.join(cfg, "jarvis.db"))
     used = backup.restore_backup(cfg)
     assert used == arc
-    assert open(os.path.join(cfg, "jarvis", "knowledge.db")).read() == "KNOW"
-    assert open(os.path.join(cfg, "jarvis.db")).read() == "FTS"
-    assert open(os.path.join(cfg, "jarvis_memory", "chroma.sqlite3")).read() == "CHROMA"
+    with open(os.path.join(cfg, "jarvis", "knowledge.db")) as file:
+        assert file.read() == "KNOW"
+    with open(os.path.join(cfg, "jarvis.db")) as file:
+        assert file.read() == "FTS"
+    with open(os.path.join(cfg, "jarvis_memory", "chroma.sqlite3")) as file:
+        assert file.read() == "CHROMA"
 
 
 def test_restore_no_backup_raises(tmp_path):

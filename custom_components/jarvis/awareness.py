@@ -218,6 +218,7 @@ def compose_reflection(observations, max_lines: int = DEFAULT_MAX_LINES) -> str:
 def _load_rows(db_path: str, lookback_days: int):
     """Read recent ``camera_event.*`` rows from the pattern store. Never raises."""
     import sqlite3
+    from .sqlite_utils import ClosingConnection
     cutoff = ""
     try:
         from datetime import timedelta
@@ -226,7 +227,7 @@ def _load_rows(db_path: str, lookback_days: int):
         cutoff = ""
     rows = []
     try:
-        with sqlite3.connect(db_path) as conn:
+        with sqlite3.connect(db_path, factory=ClosingConnection) as conn:
             conn.row_factory = sqlite3.Row
             cur = conn.execute(
                 "SELECT entity_id, new_state, area_id, hour, day_of_week, "

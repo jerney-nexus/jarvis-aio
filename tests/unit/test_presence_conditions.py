@@ -55,6 +55,7 @@ def test_time_routine_gets_presence_condition(pa, tmp_path):
     cond = m[0].details.get("condition")
     assert cond == {"condition": "state", "entity_id": "person.sam", "state": "home"}
     assert m[0].details.get("person") == "sam"
+    conn.close()
 
 
 def test_time_routine_no_condition_when_owner_unresolved(pa, tmp_path):
@@ -65,6 +66,7 @@ def test_time_routine_no_condition_when_owner_unresolved(pa, tmp_path):
     pats = pa.PatternAnalyzer()._find_time_routines(conn, {})
     m = [p for p in pats if p.entity_ids == ["light.porch"]]
     assert m and m[0].details.get("condition") is None
+    conn.close()
 
 
 def test_generate_time_routine_emits_presence_condition(pa):

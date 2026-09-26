@@ -4,6 +4,8 @@ import sqlite3
 
 import pytest
 
+from jc.sqlite_utils import ClosingConnection
+
 T0 = "2026-07-12 03:00:00"          # the focal moment used across scenarios
 
 
@@ -17,7 +19,7 @@ def dbs(tmp_path):
     """patterns.db + conversations.db with the production schemas."""
     p = str(tmp_path / "patterns.db")
     a = str(tmp_path / "conversations.db")
-    with sqlite3.connect(p) as c:
+    with sqlite3.connect(p, factory=ClosingConnection) as c:
         c.executescript("""
             CREATE TABLE state_changes (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -31,7 +33,7 @@ def dbs(tmp_path):
                 handled_by TEXT DEFAULT 'agent', entity_ids TEXT DEFAULT '[]',
                 person TEXT DEFAULT 'unknown', hour INTEGER, day_of_week INTEGER);
         """)
-    with sqlite3.connect(a) as c:
+    with sqlite3.connect(a, factory=ClosingConnection) as c:
         c.executescript("""
             CREATE TABLE activity_log (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -44,7 +46,7 @@ def dbs(tmp_path):
 
 
 def sc(db, ts, eid, old, new, *, area=None, hour=None, trig="system"):
-    with sqlite3.connect(db) as c:
+    with sqlite3.connect(db, factory=ClosingConnection) as c:
         c.execute("INSERT INTO state_changes (timestamp, entity_id, domain, "
                   "old_state, new_state, area_id, hour, day_of_week, triggered_by) "
                   "VALUES (?,?,?,?,?,?,?,?,?)",
@@ -52,13 +54,13 @@ def sc(db, ts, eid, old, new, *, area=None, hour=None, trig="system"):
 
 
 def cmd(db, ts, text, person="sam"):
-    with sqlite3.connect(db) as c:
+    with sqlite3.connect(db, factory=ClosingConnection) as c:
         c.execute("INSERT INTO commands (timestamp, text, person) VALUES (?,?,?)",
                   (ts, text, person))
 
 
 def act(db, ts, eid, message, category="action"):
-    with sqlite3.connect(db) as c:
+    with sqlite3.connect(db, factory=ClosingConnection) as c:
         c.execute("INSERT INTO activity_log (timestamp, entity_id, category, message) "
                   "VALUES (?,?,?,?)", (ts, eid, category, message))
 

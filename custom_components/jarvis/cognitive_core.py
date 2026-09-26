@@ -38,6 +38,7 @@ from homeassistant.core import HomeAssistant, Event, callback
 from homeassistant.util import dt as dt_util
 
 from .paths import config_path_str
+from .sqlite_utils import ClosingConnection
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -1958,7 +1959,7 @@ class StateLogger:
         from pathlib import Path
         Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
         try:
-            with sqlite3.connect(self._db_path) as conn:
+            with sqlite3.connect(self._db_path, factory=ClosingConnection) as conn:
                 conn.executescript("""
                     CREATE TABLE IF NOT EXISTS state_changes (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2083,7 +2084,7 @@ class StateLogger:
 
         now = datetime.now()
         try:
-            with sqlite3.connect(self._db_path) as conn:
+            with sqlite3.connect(self._db_path, factory=ClosingConnection) as conn:
                 conn.execute(
                     "INSERT INTO state_changes "
                     "(timestamp, entity_id, domain, old_state, new_state, "
@@ -2103,7 +2104,7 @@ class StateLogger:
         import sqlite3
         now = datetime.now()
         try:
-            with sqlite3.connect(self._db_path) as conn:
+            with sqlite3.connect(self._db_path, factory=ClosingConnection) as conn:
                 conn.execute(
                     "INSERT INTO commands "
                     "(timestamp, text, handled_by, entity_ids, person, "
@@ -2121,7 +2122,7 @@ class StateLogger:
         importing history can't double-count what live logging already covers."""
         import sqlite3
         try:
-            with sqlite3.connect(self._db_path) as conn:
+            with sqlite3.connect(self._db_path, factory=ClosingConnection) as conn:
                 return {r[0] for r in conn.execute(
                     "SELECT DISTINCT entity_id FROM state_changes")}
         except Exception:
@@ -2145,7 +2146,7 @@ class StateLogger:
         if not prepared:
             return 0
         try:
-            with sqlite3.connect(self._db_path) as conn:
+            with sqlite3.connect(self._db_path, factory=ClosingConnection) as conn:
                 conn.executemany(
                     "INSERT INTO state_changes "
                     "(timestamp, entity_id, domain, old_state, new_state, "
@@ -2162,7 +2163,7 @@ class StateLogger:
         stats = {"state_changes": 0, "commands": 0, "suggestions": 0,
                  "patterns": 0, "days_of_data": 0}
         try:
-            with sqlite3.connect(self._db_path) as conn:
+            with sqlite3.connect(self._db_path, factory=ClosingConnection) as conn:
                 stats["state_changes"] = conn.execute(
                     "SELECT COUNT(*) FROM state_changes").fetchone()[0]
                 stats["commands"] = conn.execute(

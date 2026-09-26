@@ -107,6 +107,7 @@ def test_detector_learns_cold_then_heater(pa, tmp_path):
     assert m[0].details["op"] == "below"
     assert m[0].details["threshold"] <= 65.0
     assert "below" in m[0].description
+    conn.close()
 
 
 def test_detector_no_trigger_when_uncorrelated(pa, tmp_path):
@@ -125,6 +126,7 @@ def test_detector_no_trigger_when_uncorrelated(pa, tmp_path):
     pats = pa.PatternAnalyzer()._find_numeric_triggers(
         conn, {"sensor.temp": series})
     assert not [p for p in pats if p.details["action"]["entity"] == "light.kitchen"]
+    conn.close()
 
 
 # ── emission ─────────────────────────────────────────────────────────────────

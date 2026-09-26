@@ -34,6 +34,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 from .paths import config_path_str
+from .sqlite_utils import ClosingConnection
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -82,7 +83,7 @@ def _tokens(entity_id: str) -> set:
 def _rows(db_path: str, sql: str, params: tuple) -> list[dict]:
     """Query a DB tolerantly: no file / no table / bad SQL ⇒ []."""
     try:
-        with sqlite3.connect(db_path) as conn:
+        with sqlite3.connect(db_path, factory=ClosingConnection) as conn:
             conn.row_factory = sqlite3.Row
             return [dict(r) for r in conn.execute(sql, params).fetchall()]
     except Exception:

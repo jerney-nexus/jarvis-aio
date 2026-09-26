@@ -134,13 +134,14 @@ def _gather_overnight_events(hass: HomeAssistant, hours: int = 12) -> list[str]:
     import sqlite3
     from pathlib import Path
     from .paths import config_path
+    from .sqlite_utils import ClosingConnection
     db = config_path("jarvis", "conversations.db", hass=hass)
     events = []
     try:
         if not db.exists():
             return []
         since = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=hours)).isoformat()
-        with sqlite3.connect(str(db)) as conn:
+        with sqlite3.connect(str(db), factory=ClosingConnection) as conn:
             rows = conn.execute(
                 "SELECT timestamp, detail FROM sentinel_events WHERE timestamp > ? "
                 "ORDER BY timestamp DESC LIMIT 10",

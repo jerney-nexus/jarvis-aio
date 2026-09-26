@@ -73,8 +73,8 @@ def test_section_without_title_returns_body_only():
 
 def test_real_changelog_has_notes_for_current_manifest_version():
     import json
-    version = json.load(
-        open(ROOT / "custom_components" / "jarvis" / "manifest.json"))["version"]
+    with open(ROOT / "custom_components" / "jarvis" / "manifest.json") as file:
+        version = json.load(file)["version"]
     notes = ec.extract((ROOT / "CHANGELOG.md").read_text(encoding="utf-8"), version)
     assert notes, f"CHANGELOG.md is missing a section for v{version}"
 

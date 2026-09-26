@@ -113,3 +113,4 @@ def test_departure_sequence_detected_and_emitted_as_zone(pa, tmp_path):
     assert "leaves home" in m[0].description
     auto = json.loads(pa.PatternAnalyzer()._generate_automation(m[0]))
     assert auto["trigger"]["platform"] == "zone" and auto["trigger"]["event"] == "leave"
+    conn.close()

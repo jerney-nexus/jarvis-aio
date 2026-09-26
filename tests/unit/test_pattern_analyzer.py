@@ -78,6 +78,7 @@ def test_time_routine_detected(analyzer, tmp_path):
     match = [p for p in found if p.entity_ids == ["light.porch_test"]]
     assert match and match[0].details["hour"] == 18
     assert match[0].pattern_type == "time_routine"
+    conn.close()
 
 
 def test_repeated_command_detected(analyzer, tmp_path):
@@ -88,6 +89,7 @@ def test_repeated_command_detected(analyzer, tmp_path):
     pa = analyzer.PatternAnalyzer()
     found = pa._find_repeated_commands(conn)
     assert any(p.details.get("command") == "goodnight" for p in found)
+    conn.close()
 
 
 def test_sequence_detected(analyzer, tmp_path):
@@ -99,6 +101,7 @@ def test_sequence_detected(analyzer, tmp_path):
     pa = analyzer.PatternAnalyzer()
     found = pa._find_sequence_patterns(conn)
     assert any(set(p.entity_ids) == {"light.a_test", "light.b_test"} for p in found)
+    conn.close()
 
 
 def test_should_analyze_gates_on_min_days(analyzer, tmp_path):
@@ -219,6 +222,7 @@ def test_time_routine_owned_by_dominant_person(analyzer, tmp_path):
     match = [p for p in found if p.entity_ids == ["light.office_test"]]
     assert match and match[0].details.get("person") == "Sam"
     assert "Sam" in match[0].description
+    conn.close()
 
 
 def test_time_routine_mixed_people_stays_household(analyzer, tmp_path):
@@ -232,6 +236,7 @@ def test_time_routine_mixed_people_stays_household(analyzer, tmp_path):
     found = pa._find_time_routines(conn)
     match = [p for p in found if p.entity_ids == ["light.hall_test"]]
     assert match and "person" not in match[0].details  # no one dominates
+    conn.close()
 
 
 def test_repeated_command_owned_by_dominant_person(analyzer, tmp_path):
@@ -243,6 +248,7 @@ def test_repeated_command_owned_by_dominant_person(analyzer, tmp_path):
     found = pa._find_repeated_commands(conn)
     match = [p for p in found if p.details.get("command") == "play jazz"]
     assert match and match[0].details.get("person") == "Sam"
+    conn.close()
 
 
 def test_dominant_person_missing_column_is_safe(analyzer, tmp_path):
@@ -262,6 +268,7 @@ def test_dominant_person_missing_column_is_safe(analyzer, tmp_path):
     pa = analyzer.PatternAnalyzer()
     assert pa._dominant_person(conn, "state_changes", entity="light.x",
                                state="on", hour=8) is None
+    conn.close()
 
 
 def test_promote_attributes_fact_to_person_subject(analyzer, knowledge, tmp_path, monkeypatch):

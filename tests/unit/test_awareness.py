@@ -7,6 +7,8 @@ from datetime import datetime
 
 import pytest
 
+from jc.sqlite_utils import ClosingConnection
+
 
 @pytest.fixture
 def aw(load):
@@ -125,7 +127,7 @@ def test_hour_phrase_edges(aw):
 
 # ── reflect: guarded DB reader ────────────────────────────────────────────────
 def _make_db(path, rows):
-    with sqlite3.connect(path) as conn:
+    with sqlite3.connect(path, factory=ClosingConnection) as conn:
         conn.execute("""CREATE TABLE state_changes (
             id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT, entity_id TEXT,
             domain TEXT, old_state TEXT, new_state TEXT, area_id TEXT,

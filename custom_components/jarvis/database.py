@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Optional
 
 from .paths import config_path
+from .sqlite_utils import ClosingConnection
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -53,7 +54,7 @@ def _connect() -> sqlite3.Connection:
     global _last_error
     try:
         DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(str(DB_PATH))
+        conn = sqlite3.connect(str(DB_PATH), factory=ClosingConnection)
         conn.row_factory = sqlite3.Row
         conn.executescript(SCHEMA)
         conn.commit()

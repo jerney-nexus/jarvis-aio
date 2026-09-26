@@ -20,6 +20,7 @@ from datetime import datetime, timedelta
 from typing import Awaitable, Callable, Optional
 
 from .paths import config_path_str
+from .sqlite_utils import ClosingConnection
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -30,7 +31,7 @@ STATUSES = ("pending", "done", "cancelled", "failed")
 
 
 def _connect(db_path: str) -> sqlite3.Connection:
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(db_path, factory=ClosingConnection)
     conn.row_factory = sqlite3.Row
     conn.execute("""
         CREATE TABLE IF NOT EXISTS followups (

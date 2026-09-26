@@ -98,7 +98,8 @@ async def test_process_due_without_runner_fails_safely(fu, fake_hass):
 
 
 def _all(fu):
+    from contextlib import closing
     import sqlite3
-    with sqlite3.connect(fu.DB_PATH) as c:
+    with closing(sqlite3.connect(fu.DB_PATH)) as c:
         c.row_factory = sqlite3.Row
         return [dict(r) for r in c.execute("SELECT * FROM followups").fetchall()]
