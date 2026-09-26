@@ -49,10 +49,14 @@ CREATE INDEX IF NOT EXISTS idx_trigger_at ON reminders(trigger_at);
 def _connect():
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(DB_PATH), factory=ClosingConnection)
-    conn.row_factory = sqlite3.Row
-    conn.executescript(SCHEMA)
-    conn.commit()
-    return conn
+    try:
+        conn.row_factory = sqlite3.Row
+        conn.executescript(SCHEMA)
+        conn.commit()
+        return conn
+    except Exception:
+        conn.close()
+        raise
 
 
 def _in_quiet_hours(now: Optional[datetime] = None) -> bool:
