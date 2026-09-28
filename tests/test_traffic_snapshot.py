@@ -69,3 +69,13 @@ def test_missing_token_degrades_to_public_metrics(tmp_path):
     assert "No referrer data" in report
     assert "Sources that failed today: views" in report
     assert "| Stars | 10 |" in report
+
+
+def test_week_windows_anchor_on_latest_reported_day(tmp_path):
+    # GitHub stopped reporting 4 days ago; that gap must not read as a drop.
+    today = dt.date(2026, 9, 28)
+    last = today - dt.timedelta(days=5)
+    views = [((last - dt.timedelta(days=i)).isoformat(), 10, 2) for i in range(14)]
+    report = ts.run(tmp_path, _snap(views), today)
+    assert f"## 7 days to {last.isoformat()} vs the 7 before" in report
+    assert "| Views | 70 | 70 | +0% |" in report
