@@ -56,9 +56,10 @@ we tell which ones actually worked.
    - Keep the first README paragraph a plain, self-contained answer to
      "what is it, who is it for, how do I install it". The HACS search line
      now sits in the quick start.
-   - Add a short FAQ section with the literal questions people ask: "Does it
-     work without the cloud?", "Does it work with Ollama?", "How is it
-     different from the built-in Assist / OpenAI Conversation?"
+   - ~~Add a README FAQ~~ Done 2026-09-28. It answers the literal questions
+     people ask ("Does it work with Ollama?", "Can it run offline?", "How is it
+     different from Assist / OpenAI Conversation?"). Add new questions as they
+     come up in issues and forum threads.
    - Every forum or Reddit post below becomes more text these tools can cite.
    Referrer: `chatgpt.com`, `perplexity.ai` and similar. Watch whether that
    share grows after the FAQ lands.

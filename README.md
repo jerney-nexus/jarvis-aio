@@ -64,6 +64,40 @@ Everything past this point — vision, doorbell analysis, the Iron Man HUD's liv
 <sub>Visuals reflect the panel's actual design system. The live dashboard renders in your browser inside Home Assistant.</sub>
 </div>
 
+## FAQ
+
+**What is JARVIS, in one sentence?**
+An AI assistant for Home Assistant that you can talk to, and that also watches your home on its own, decides what's worth telling you, and suggests automations from what it learns. It installs from HACS as a custom integration.
+
+**How is it different from Home Assistant's built-in Assist or the OpenAI / Google Generative AI conversation integrations?**
+Those answer when you speak to them. JARVIS does that too, since it plugs into the same Assist voice pipeline as its conversation agent. It also runs in the background:
+- The Cognitive Core classifies every home event by urgency and speaks up only when something matters.
+- It remembers facts and per-person routines, and proposes automations from patterns it sees.
+- It analyzes doorbell and porch cameras.
+- It ships its own HUD dashboard.
+- It keeps making decisions offline through the Local Mind.
+
+**Does it work with Ollama or other local models? Can it run fully offline?**
+Yes. Choose Ollama (or any OpenAI-compatible endpoint) as the provider and point it at your server, for example `http://gpu-server:11434/v1`. No API key or cloud account is needed. With a local model for every role, nothing leaves your network. If a cloud provider becomes unreachable, the offline Local Mind takes over event decisions, so alerts and judgment keep working.
+
+**Which AI providers does it support? Is there a free option?**
+Groq, OpenAI, Anthropic, Gemini, Ollama, and any custom OpenAI-compatible endpoint. You can use a different provider for each role (conversation, classifier, reasoning, vision). [Groq](https://console.groq.com)'s free tier is the recommended starting point, and Ollama costs nothing if you have the hardware.
+
+**Do I need cameras, voice hardware, or a GPU?**
+No. You need Home Assistant 2024.10+ with HACS and one LLM provider, and you can be talking to it in about five minutes. Cameras (Frigate recommended, Nest supported), ESP32-S3 voice satellites, and a local GPU are all optional upgrades.
+
+**Will it take actions on its own?**
+Not at first. By default JARVIS offers, and you decide. Only after you've accepted the same kind of offer three times does it start doing that one thing on its own. It still logs the action, and you can revoke that trust at any time. Sensitive actions such as unlocking can require voice confirmation.
+
+**Where does my data go?**
+It stays in your Home Assistant instance under `/config/jarvis/`. There is no JARVIS cloud and no telemetry. The only things sent out are calls to the LLM and vision providers you configure, and nothing at all if those are local. See [Privacy & your data](#privacy--your-data).
+
+**What languages does it speak?**
+It follows your Home Assistant language, and it replies in the language you spoke to it in. The panel and setup dialogs are translated into 20 languages; see [Languages](#languages).
+
+**How do I install it?**
+Open HACS, search for **JARVIS AI Assistant**, install it, and restart Home Assistant. Then add it under *Settings → Devices & Services*. Full steps are in [Installation](#installation).
+
 ## Full capability reference
 
 Everything JARVIS can do today, by domain. In conversation these surface as
