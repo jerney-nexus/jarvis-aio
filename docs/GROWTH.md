@@ -5,26 +5,30 @@ The numbers come from `.github/workflows/traffic.yml`, which runs daily. It
 writes `REPORT.md` on the `traffic-data` branch and opens a **Weekly traction
 report** issue every Monday. This page covers what to do with them.
 
-## Baseline (2026-09-26)
+## Baseline (first real traffic data, 2026-09-28)
+
+GitHub's traffic numbers lag a few days. This data runs from Sept 10 to Sept 23.
 
 | Signal | Value | Read |
 |---|---|---|
-| Stars | 17 in ~15 weeks (repo created 2026-06-13) | A steady trickle of about one every 2–3 days since early August. That's organic discovery with no launch behind it. |
+| Unique visitors | ~15–25 a day (123 across the week to Sept 23, 116 the week before) | A small but steady audience. Views doubled week over week, but unique visitors didn't, so the extra views came from a few heavy visitors (mostly the maintainer, see below). |
+| Stars | 20 (+3 in the last week) | Since early August, about one every 2–3 days. Organic discovery with no launch behind it. |
+| Top referrers | github.com 20 uniques, **chatgpt.com 15**, Google 2 | ChatGPT is already recommending JARVIS and sends nearly as many people as all of GitHub. Google sends almost none. |
+| Most-visited pages | Repo home 134 uniques, Issues 29, Releases 8 | Visitors look at the landing page and then check Issues to see whether the project is maintained. The PR pages with 1–2 uniques are the maintainer's own review traffic. |
+| Clones | 300+ unique a week | Inflated. Every CI run and HACS validation checks out the repo, so clones are not an audience signal. |
+| Distribution | Listed in the **HACS default store** | Anyone can find it by searching HACS. Neither HACS nor HA analytics reports an install count for it yet (see Step 0). |
 | Forks / watchers | 3 / 2 | Very few people are following along yet. |
-| Release downloads | 0 | Not a real zero. Releases carry no assets, so HACS installs from the source zipball and nothing gets counted. |
-| HA analytics installs | not yet recorded | The workflow reads `analytics.home-assistant.io`, but that only counts instances that opted in to analytics. |
-| Views / clones / referrers | not yet recorded | Needs `TRAFFIC_TOKEN` (see below). GitHub keeps only 14 days, so every day without the token is lost for good. |
-| Distribution | HACS **custom repository** | Users have to know the repo URL before they can install. That's the biggest friction point we have. |
 
-So far, the few people who find JARVIS keep it: they star it and fork it. The
-problem is getting found in the first place, not keeping people once they arrive.
+What the numbers say: people who find JARVIS stay. They check the issues and
+they star it. But most discovery happens where we aren't posting: GitHub
+browsing and AI assistants. The plan below leans into the one channel that
+already works (AI answers) and opens the community channels we haven't used yet.
 
 ## Step 0: turn the lights on (do this first)
 
-1. **Add `TRAFFIC_TOKEN`.** Create a fine-grained PAT (GitHub → Settings →
-   Developer settings → Fine-grained tokens). Scope it to `sam3gp8/jarvis-aio`
-   only, give it **Administration: Read-only**, and add it as the repository
-   secret `TRAFFIC_TOKEN`. Then run the *Traffic* workflow by hand.
+1. ~~**Add `TRAFFIC_TOKEN`.**~~ Done 2026-09-28. The token is a
+   fine-grained PAT limited to this repo with **Administration: Read-only**.
+   Renew it before it expires, or the traffic rows go blank again.
 2. **Fix the repo description.** It currently reads
    `for Home      Assistant` with a run of spaces. GitHub search and social
    cards show that string.
@@ -33,7 +37,8 @@ problem is getting found in the first place, not keeping people once they arrive
    `home-automation`, `custom-component`, `llm`, `ai-assistant`, `ollama`,
    `local-llm`, `openai`, `anthropic`, `gemini`, `groq`. People browse
    GitHub topic pages, and each topic is a place JARVIS can show up.
-4. **Optional: make installs countable.** Set `"zip_release": true` and
+4. **Make installs countable.** This is the only install signal we can get,
+   because JARVIS doesn't appear in HA analytics yet. Set `"zip_release": true` and
    `"filename": "jarvis.zip"` in `hacs.json`, and have `release.yml` attach
    that zip. HACS then downloads a release asset, and its download count
    becomes an install counter. This changes the release process, so it's
@@ -44,12 +49,19 @@ problem is getting found in the first place, not keeping people once they arrive
 Each channel shows up in the weekly report under **Top referrers**. That's how
 we tell which ones actually worked.
 
-1. **HACS default store.** Submit JARVIS to
-   [`hacs/default`](https://github.com/hacs/default). Once it's in, anyone
-   can find it by searching "JARVIS" in HACS, with no repo URL to paste. The
-   HACS and Hassfest checks already run in `validate.yml`, so we mainly need
-   a clean release and the submission PR. Of everything here, this has the
-   highest ceiling.
+1. **AI answer engines (ChatGPT, Perplexity, Claude, Gemini).** This is
+   already our second-biggest referrer, and nobody pushed it. These tools
+   answer questions like "best AI assistant for Home Assistant" by quoting
+   whatever explains JARVIS most clearly. Make that easy:
+   - Keep the first README paragraph a plain, self-contained answer to
+     "what is it, who is it for, how do I install it". The HACS search line
+     now sits in the quick start.
+   - Add a short FAQ section with the literal questions people ask: "Does it
+     work without the cloud?", "Does it work with Ollama?", "How is it
+     different from the built-in Assist / OpenAI Conversation?"
+   - Every forum or Reddit post below becomes more text these tools can cite.
+   Referrer: `chatgpt.com`, `perplexity.ai` and similar. Watch whether that
+   share grows after the FAQ lands.
 2. **Home Assistant Community forum → "Share your Projects".** This is the
    usual launch venue for HA integrations. Post one thread and keep it going
    as the changelog: each notable release is a reply, which bumps the thread.
@@ -76,19 +88,19 @@ we tell which ones actually worked.
 6. **Curated lists.** Open a PR to
    [awesome-home-assistant](https://github.com/frenck/awesome-home-assistant)
    and to awesome LLM/agent lists. It's a small but lasting referrer.
-7. **Show HN.** Save this for after the demo video and the HACS default
-   listing. Lead with the Local Mind and the "suggest, don't act" design,
+7. **Show HN.** Save this for after the demo video. Lead with the Local Mind and the "suggest, don't act" design,
    not the Iron Man theme.
 
 ## Reading the weekly report and acting on it
 
 | If the report shows… | Then… |
 |---|---|
+| Page views jump but unique visitors don't | That's our own activity (reviewing PRs, checking Actions). Judge traction by uniques on the repo home page. |
 | One referrer brings in most of the week's uniques | Double down there: reply in that thread and post the next update there first. |
 | A referrer we posted to sends almost nothing after 7 days | Drop it or change the angle. Don't repost the same pitch. |
 | Views are up but stars aren't (stars/unique visitors under ~3%) | The README is losing people. Put the demo video and the quick start higher, and trim everything above the fold. |
 | Clones or installs jump right after a release | Release notes are working as a channel. Post highlights for notable releases to the forum thread. |
-| `/blob/main/README.md` or the `/releases` page dominates *popular paths* | Visitors are trying to evaluate or install. Make install one click (the HACS default listing). |
+| `/blob/main/README.md` or the `/releases` page dominates *popular paths* | Visitors are trying to evaluate or install. Make sure the quick start says "search JARVIS in HACS" near the top. |
 | Week-over-week views are flat for 3+ weeks | Run the next channel down the list. |
 
 **Release cadence note:** there were 15 releases in the week of 2026-09-22.
@@ -100,7 +112,7 @@ and post a single highlights reply for each.
 
 | Week | Do | Watch in the report |
 |---|---|---|
-| 1 | Step 0 (token, description, topics). Record the demo video. Submit to HACS default. | Baseline views and uniques; the first referrer list. |
+| 1 | Finish Step 0 (description, topics, zip releases). Add the README FAQ. Record the demo video. | Baseline uniques (~17/day); `chatgpt.com` share of referrers. |
 | 2 | Post the HA forum "Share your Projects" thread and the awesome-home-assistant PR. | `community.home-assistant.io` among referrers; stars/week. |
 | 3 | Post to r/homeassistant, then r/LocalLLaMA 3–4 days later. | Reddit referrers; stars/unique visitors. |
 | 4 | Pitch 3–5 YouTube creators. Review what worked and re-rank this list. | Which channel had the best uniques → stars rate. |

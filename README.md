@@ -23,7 +23,7 @@ It installs as a Home Assistant **custom integration** via HACS and runs entirel
 
 JARVIS looks elaborate, but the floor is low — you can be talking to it in five minutes with nothing but Home Assistant and one configured LLM provider. Cameras, voice hardware, and local GPU inference are all **optional** upgrades you add later.
 
-1. **Install via HACS** — add this repo ([badge below](#installation)), install "JARVIS AI Assistant," restart Home Assistant.
+1. **Install via HACS** — search for "JARVIS AI Assistant" in HACS ([or use the badge below](#installation)), install it, restart Home Assistant.
 2. **Add the integration** — *Settings → Devices & Services → Add Integration → JARVIS*. Choose one or more providers in the setup menu, enter and validate each provider's key or endpoint, then choose the Main Agent provider and model. You can use [Groq](https://console.groq.com) (free tier, generous), OpenAI, Anthropic, Gemini, a custom OpenAI-compatible endpoint, or local Ollama.
 3. **That's it.** JARVIS registers its conversation agent and appears in your sidebar. Ask it about your home, your calendar, or the outside world.
 
@@ -130,15 +130,11 @@ tools the agent invokes on its own; most also have a panel control.
 
 ## Installation
 
-**1. Add this repository to HACS.**
+**1. Find JARVIS in HACS.** It's listed in the HACS default store, so no custom repository is needed.
 
 [![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=sam3gp8&repository=jarvis-aio&category=Integration)
 
-Click the badge above, or do it manually — in **HACS → ⋮ (top right) → Custom repositories**, add the URL below with category **Integration**:
-
-```
-https://github.com/sam3gp8/jarvis-aio
-```
+Click the badge above, or open **HACS** in Home Assistant and search for **JARVIS AI Assistant**.
 
 **2. Install "JARVIS AI Assistant"** from HACS, then restart Home Assistant.
 

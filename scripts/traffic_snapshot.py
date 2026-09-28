@@ -130,8 +130,13 @@ def _first_on_or_after(points: list[dict], day: str) -> dict | None:
 
 def render_report(daily: dict, points: list[dict], today: dt.date) -> str:
     latest = points[-1] if points else {}
-    # Traffic for "today" is partial; weigh the last complete days.
+    # Traffic for "today" is partial, and GitHub can lag several days behind.
+    # Anchor on the newest complete day it has reported, so missing days are
+    # not mistaken for a drop.
     end = today - dt.timedelta(days=1)
+    reported = [d for d in daily if d <= end.isoformat()]
+    if reported:
+        end = dt.date.fromisoformat(max(reported))
     v7, vu7 = _window(daily, "views", end, 7)
     v7p, vu7p = _window(daily, "views", end - dt.timedelta(days=7), 7)
     c7, cu7 = _window(daily, "clones", end, 7)
@@ -147,9 +152,10 @@ def render_report(daily: dict, points: list[dict], today: dt.date) -> str:
         f"# JARVIS traction report — {today.isoformat()}",
         "",
         "Generated daily by `.github/workflows/traffic.yml`. What to do with these",
-        "numbers lives in `docs/GROWTH.md` on the default branch.",
+        "numbers lives in `docs/GROWTH.md` on the default branch. Clone counts",
+        "include CI checkouts, so treat views and referrers as the audience signal.",
         "",
-        "## Last 7 complete days vs the 7 before",
+        f"## 7 days to {end.isoformat()} vs the 7 before",
         "",
         "| Metric | Last 7d | Prior 7d | Change |",
         "|---|---:|---:|---:|",
