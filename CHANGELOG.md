@@ -10,6 +10,8 @@ By default JARVIS auto-arms intrusion detection whenever the residents are confi
 
 Everyone who leaves the setting off keeps the existing automatic, presence-driven protection unchanged. Corroboration, vision confirmation, the investigate-then-escalate flow, and false-alarm call-off all work exactly as before within whichever mode is active.
 
+**Also fixes installation on current Home Assistant.** HA core now bundles `google-genai==2.25.0`, which the old `<2.25.0` requirement ceiling excluded — so manifest validation (hassfest) failed and the integration wouldn't install. The Gemini provider's native Interactions API surface is unchanged across the 2.x line (verified against 2.24.0 and 2.25.0), so the ceiling is widened to `<3.0.0`.
+
 ## [8.3.0] — closing the executive-brain loop: self-tuning, a knowledge graph, and scene memory
 
 Three additions that connect capabilities JARVIS already had into a fuller loop.

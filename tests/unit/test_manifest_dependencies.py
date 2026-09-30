@@ -77,6 +77,12 @@ def test_logbook_and_recorder_declared():
     assert "recorder" in declared
 
 
-def test_google_genai_uses_temperature_compatible_schema():
+def test_google_genai_requirement_allows_ha_core_pin():
+    # The requirement must stay compatible with the google-genai that Home
+    # Assistant core bundles, or hassfest fails ("incompatible with
+    # google-genai==X, which Home Assistant depends on") and the integration
+    # won't install. HA now pins 2.25.0; the native Interactions API surface
+    # JARVIS uses (interactions.create + the generation-config schema) is
+    # unchanged across the 2.x range, so the ceiling is the 2.x boundary.
     manifest = json.loads((COMP / "manifest.json").read_text())
-    assert "google-genai>=2.3.0,<2.25.0" in manifest["requirements"]
+    assert "google-genai>=2.3.0,<3.0.0" in manifest["requirements"]
