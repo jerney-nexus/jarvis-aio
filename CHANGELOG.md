@@ -10,8 +10,6 @@ By default JARVIS auto-arms intrusion detection whenever the residents are confi
 
 Everyone who leaves the setting off keeps the existing automatic, presence-driven protection unchanged. Corroboration, vision confirmation, the investigate-then-escalate flow, and false-alarm call-off all work exactly as before within whichever mode is active.
 
-Also widens the `google-genai` requirement ceiling to `<2.26.0` so the integration installs on current Home Assistant, which now bundles `google-genai==2.25.0` (the old `<2.25.0` bound failed manifest validation).
-
 ## [8.3.0] — closing the executive-brain loop: self-tuning, a knowledge graph, and scene memory
 
 Three additions that connect capabilities JARVIS already had into a fuller loop.
