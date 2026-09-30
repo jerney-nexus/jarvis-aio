@@ -7169,6 +7169,10 @@ ${this._renderExcludedEntities(d)}
       <label>Confirm Frigate person with JARVIS vision before alarming</label>
       <button class="toggle-btn ${this._liveData?.config?.intrusion_vision_confirm !== false ? 'on' : 'off'}" data-cfg-key="intrusion_vision_confirm" data-cfg-val="${this._liveData?.config?.intrusion_vision_confirm !== false ? 'false' : 'true'}">${this._liveData?.config?.intrusion_vision_confirm !== false ? 'ON' : 'OFF'}</button>
     </div>`;
+    html += `<div class="intr-timeout-row">
+      <label>Require confinement (Lockdown or armed alarm) for intrusion monitoring</label>
+      <button class="toggle-btn ${this._liveData?.config?.intrusion_requires_confinement === true ? 'on' : 'off'}" data-cfg-key="intrusion_requires_confinement" data-cfg-val="${this._liveData?.config?.intrusion_requires_confinement === true ? 'false' : 'true'}">${this._liveData?.config?.intrusion_requires_confinement === true ? 'ON' : 'OFF'}</button>
+    </div>`;
     html += `<div class="doclib-controls">
       <button class="cam-diag-btn intr-ack-btn">✓ I'M LOOKING (HOLD)</button>
       <button class="cam-diag-btn intr-dismiss">✕ CALL OFF (FALSE ALARM)</button>

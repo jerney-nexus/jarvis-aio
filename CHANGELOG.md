@@ -1,3 +1,15 @@
+## [8.4.0] — make confinement the master switch for intrusion monitoring (opt-in)
+
+**New setting: `intrusion_requires_confinement`** (Settings → Safety & Energy → *Require confinement for intrusion monitoring*), off by default so nothing changes unless you turn it on. Requested in #111.
+
+By default JARVIS auto-arms intrusion detection whenever the residents are confidently **away** (tracked-away or an armed-away alarm) or **asleep** — you never have to remember to arm it. Some homes would rather it be a deliberate switch. With this setting **on**:
+
+- **Confinement is the master switch.** Intrusion monitoring runs only while the home is *confined* — a formal **Lockdown** is engaged **or** an **alarm panel is armed** (any armed state) — regardless of presence or sleep. Arming it while you're home still watches for entry.
+- **Disarming stops it immediately.** Clearing the Lockdown / disarming the alarm halts monitoring at once and drops any investigation already in progress.
+- **Off → nothing.** With confinement off, door/window and motion activity never raises an intrusion alert.
+
+Everyone who leaves the setting off keeps the existing automatic, presence-driven protection unchanged. Corroboration, vision confirmation, the investigate-then-escalate flow, and false-alarm call-off all work exactly as before within whichever mode is active.
+
 ## [8.3.0] — closing the executive-brain loop: self-tuning, a knowledge graph, and scene memory
 
 Three additions that connect capabilities JARVIS already had into a fuller loop.
