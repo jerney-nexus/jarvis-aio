@@ -103,6 +103,65 @@ async def test_intrusion_debounced_within_window(safety, fake_hass):
     assert _intrusions(second) == []  # 5-min debounce suppresses the repeat
 
 
+# ── intrusion_requires_confinement: confinement as the master switch (#111) ──
+
+async def test_requires_confinement_suppresses_when_not_confined(cognitive_core, fake_hass):
+    # A scenario that alerts in the default model (tracked-away + open door +
+    # motion) is silent when confinement-gating is on and nothing is armed.
+    safety = cognitive_core.SafetyManager(
+        fake_hass, {"honorific": "sir", "intrusion_requires_confinement": True})
+    fake_hass.states.set("person.sam", "not_home")
+    fake_hass.states.set("device_tracker.sam_phone", "not_home")
+    fake_hass.states.set("binary_sensor.front_door", "on", device_class="door")
+    _motion(fake_hass)
+    actions = await safety.tick(sleeping=False, anyone_home=False)
+    fake_hass.close_pending()
+    assert _intrusions(actions) == []
+
+
+async def test_requires_confinement_armed_alarm_enables_even_while_home(cognitive_core, fake_hass):
+    # Arming confinement (here an armed_home alarm — NOT an "away" state) engages
+    # monitoring; the armed panel corroborates, so motion alerts even with a
+    # resident home.
+    safety = cognitive_core.SafetyManager(
+        fake_hass, {"honorific": "sir", "intrusion_requires_confinement": True})
+    fake_hass.states.set("person.sam", "home")
+    fake_hass.states.set("alarm_control_panel.home", "armed_home")
+    _motion(fake_hass)
+    actions = await safety.tick(sleeping=False, anyone_home=True)
+    fake_hass.close_pending()
+    assert len(_intrusions(actions)) == 1
+
+
+async def test_disabling_confinement_stops_active_investigation(cognitive_core, fake_hass):
+    # An investigation in progress must stop the instant confinement is cleared.
+    safety = cognitive_core.SafetyManager(
+        fake_hass, {"honorific": "sir", "intrusion_requires_confinement": True})
+    fake_hass.states.set("alarm_control_panel.home", "armed_away")
+    fake_hass.states.set("binary_sensor.front_door", "on", device_class="door")
+    _motion(fake_hass)
+    first = await safety.tick(sleeping=False, anyone_home=False)
+    fake_hass.close_pending()
+    assert len(_intrusions(first)) == 1
+    assert safety._investigation is not None
+
+    # Disarm → confinement off → monitoring stops and the investigation is dropped.
+    fake_hass.states.set("alarm_control_panel.home", "disarmed")
+    second = await safety.tick(sleeping=False, anyone_home=False)
+    fake_hass.close_pending()
+    assert _intrusions(second) == []
+    assert safety._investigation is None
+
+
+async def test_confinement_gate_off_preserves_default_away_behavior(safety, fake_hass):
+    # With the flag absent (default), the proven away-path behavior is unchanged.
+    fake_hass.states.set("person.sam", "not_home")
+    fake_hass.states.set("binary_sensor.front_door", "on", device_class="door")
+    _motion(fake_hass)
+    actions = await _tick(safety, fake_hass, anyone_home=False)
+    assert len(_intrusions(actions)) == 1
+
+
 # ── notification snapshot image data (v6.69.0) ──────────────────────────────
 
 def test_notification_image_data_absolute_url(cognitive_core, fake_hass):

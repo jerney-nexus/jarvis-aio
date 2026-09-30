@@ -287,10 +287,23 @@ class SafetyManager:
             actions.append(freeze_action)
 
         # ── Unauthorized entry detection ────────────────────────────
-        # Only when residents are CONFIDENTLY away (tracked away / armed-away) or
+        # Default: auto-arm on confident-away (tracked away / armed-away) or
         # asleep — never on the mere absence of occupancy, which falsely fires when
         # someone is home but untracked.
-        if self._residents_away() or sleeping or self._investigation is not None:
+        # Opt-in (intrusion_requires_confinement): make an explicit "confinement"
+        # signal the master switch instead — a formal Lockdown OR an armed alarm
+        # panel. Monitoring runs only while confined, and clearing confinement
+        # stops it at once, dropping any active investigation (issue #111).
+        if self.config.get("intrusion_requires_confinement", False):
+            confined = is_lockdown() or self._alarm_armed()
+            if confined:
+                intrusion = await self._check_intrusion(
+                    anyone_home, sleeping, confined=True)
+                if intrusion:
+                    actions.append(intrusion)
+            elif self._investigation is not None:
+                self._investigation = None  # confinement off → stop immediately
+        elif self._residents_away() or sleeping or self._investigation is not None:
             intrusion = await self._check_intrusion(anyone_home, sleeping)
             if intrusion:
                 actions.append(intrusion)
@@ -520,12 +533,17 @@ class SafetyManager:
         return None
 
     async def _check_intrusion(self, anyone_home: bool,
-                                sleeping: bool) -> Optional[dict]:
+                                sleeping: bool, confined: bool = False) -> Optional[dict]:
         """Detect unauthorized entry when away or asleep. Fires ONE alert, then
         investigates silently until it's a confirmed intrusion (escalated to the
-        whole house + every device) or confirmed benign."""
+        whole house + every device) or confirmed benign.
+
+        ``confined`` is set by the intrusion_requires_confinement gate: an
+        explicit Lockdown/alarm-armed signal engages the away-path monitoring
+        even when presence isn't tracked-away, so arming confinement while home
+        still watches for entry (issue #111)."""
         now = time.time()
-        away = self._residents_away()
+        away = self._residents_away() or confined
 
         # A recent user "false alarm" call-off suppresses new intrusion alerts.
         try:
