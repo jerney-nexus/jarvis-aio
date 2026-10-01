@@ -2103,6 +2103,37 @@ dotLabel.textContent = lightBtn.classList.contains("adl")
     }
   }
 
+  // Wire every config on/off toggle (a button carrying both data-cfg-key and
+  // data-cfg-val) under `root`. Extracted from the main wiring pass so cards
+  // rendered lazily — the Intrusion tab is populated after that pass runs —
+  // can wire their own toggles; otherwise those buttons render but clicking
+  // does nothing (issue #111). Idempotent: a button is wired at most once.
+  _wireConfigToggles(root) {
+    if (!root) return;
+    root.querySelectorAll("[data-cfg-key][data-cfg-val]").forEach(btn => {
+      if (btn._cfgWired) return;
+      btn._cfgWired = true;
+      btn.addEventListener("click", async (e) => {
+        const key = e.currentTarget.getAttribute("data-cfg-key");
+        const rawVal = e.currentTarget.getAttribute("data-cfg-val");
+        const value = rawVal === "true" ? true : rawVal === "false" ? false : rawVal;
+        if (!key || !this._hass) return;
+        // Gate: a toggle carrying data-confirm must be explicitly acknowledged
+        // before it can be switched ON (e.g. FRIDAY, which can actuate the home).
+        // Only enabling (value === true) prompts; turning it back off never does.
+        const confirmMsg = e.currentTarget.getAttribute("data-confirm");
+        if (confirmMsg && value === true && !window.confirm(confirmMsg)) return;
+        try {
+          await this._hass.callWS({ type: "jarvis/update_config", key, value });
+          this._toast(`✓ ${key} → ${value}`, "ok");
+          await this._fetchAndRender();
+        } catch (err) {
+          this._toast(`✗ ${key} — ${err?.message || err}`, "err");
+        }
+      });
+    });
+  }
+
   _applianceTypes() {
     return ['washer', 'dryer', 'dishwasher', 'oven', 'microwave', 'appliance'];
   }
@@ -5711,30 +5742,7 @@ ${this._renderExcludedEntities(d)}
     _exclDel('excl-dom-del', 'excluded_domains');
     _exclDel('excl-lab-del', 'excluded_labels');
 
-    this.shadowRoot.querySelectorAll("[data-cfg-key][data-cfg-val]").forEach(btn => {
-      btn.addEventListener("click", async (e) => {
-        const key = e.currentTarget.getAttribute("data-cfg-key");
-        const rawVal = e.currentTarget.getAttribute("data-cfg-val");
-        const value = rawVal === "true" ? true : rawVal === "false" ? false : rawVal;
-        if (!key || !this._hass) return;
-        // Gate: a toggle carrying data-confirm must be explicitly acknowledged
-        // before it can be switched ON (e.g. FRIDAY, which can actuate the home).
-        // Only enabling (value === true) prompts; turning it back off never does.
-        const confirmMsg = e.currentTarget.getAttribute("data-confirm");
-        if (confirmMsg && value === true && !window.confirm(confirmMsg)) return;
-        try {
-          await this._hass.callWS({
-            type: "jarvis/update_config",
-            key: key,
-            value: value,
-          });
-          this._toast(`✓ ${key} → ${value}`, "ok");
-          await this._fetchAndRender();
-        } catch (err) {
-          this._toast(`✗ ${key} — ${err?.message || err}`, "err");
-        }
-      });
-    });
+    this._wireConfigToggles(this.shadowRoot);
 
     // Voice Confirmation: announce test (v7.94.0)
     // Manual "Analyze Now" — force a pattern-analysis pass (bypasses only the
@@ -7178,6 +7186,10 @@ ${this._renderExcludedEntities(d)}
       <button class="cam-diag-btn intr-dismiss">✕ CALL OFF (FALSE ALARM)</button>
     </div>`;
     body.innerHTML = html;
+    // This card is rendered after the main wiring pass, so its on/off toggles
+    // (vision-confirm, require-confinement) need wiring here or they do nothing
+    // when clicked (issue #111).
+    this._wireConfigToggles(body);
     const btn = body.querySelector(".intr-dismiss");
     btn?.addEventListener("click", async () => {
       if (!this._hass) return;

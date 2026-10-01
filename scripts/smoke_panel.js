@@ -703,6 +703,26 @@ setTimeout(async () => {
     ["intrusion acknowledge button present", !!el.shadowRoot.querySelector(".intr-ack-btn")],
     ["intrusion response-timeout selector present", !!el.shadowRoot.querySelector('[data-cfg-key="intrusion_response_timeout"]')],
   );
+  // Regression (#111): on/off toggles in the lazily-rendered Intrusion card
+  // must be wired — the require-confinement toggle rendered but clicking it did
+  // nothing, because the one-time toggle-wiring pass ran before this card
+  // existed. Click it and assert the config actually gets saved.
+  const _confToggle = el.shadowRoot.querySelector('[data-cfg-key="intrusion_requires_confinement"]');
+  let _confSaved = null;
+  const _realCW = hass.callWS;
+  hass.callWS = async (m) => {
+    if (m.type === "jarvis/update_config" && m.key === "intrusion_requires_confinement") _confSaved = m.value;
+    return _realCW(m);
+  };
+  _confToggle?.click();
+  await new Promise(r => setTimeout(r, 20));
+  hass.callWS = _realCW;
+  checks.push(
+    ["intrusion confinement toggle present (off by default)",
+      !!_confToggle && /off/.test(_confToggle.className)],
+    ["intrusion confinement toggle is wired — clicking saves config (#111)",
+      _confSaved === true],
+  );
   el.shadowRoot.querySelector(".intr-dismiss")?.click();
   await new Promise(r => setTimeout(r, 20));
   checks.push(

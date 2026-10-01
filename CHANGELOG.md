@@ -1,3 +1,9 @@
+## [8.4.2] — fix: panel toggles on the Intrusion tab now respond to clicks
+
+**Fixes the new "Require confinement for intrusion monitoring" toggle (and the Frigate vision-confirm toggle beside it) doing nothing when clicked** (reported on #111). The panel wires its on/off toggles in a single pass that runs before the Intrusion tab is populated, so the two toggles in the Intrusion / Security card rendered but never got their click handler — clicking them appeared to do nothing and the setting never turned ON.
+
+The toggle-wiring is now a reusable step that the Intrusion card runs on itself after it renders, so both toggles save correctly. Added a panel smoke-test regression check that clicks the confinement toggle and asserts the config is persisted.
+
 ## [8.4.1] — reliability fixes from the architecture audit
 
 Two correctness/consistency fixes surfaced by an event-loop and persistence review (no settings or behaviour change):
