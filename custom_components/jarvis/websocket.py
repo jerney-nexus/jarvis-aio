@@ -1560,13 +1560,23 @@ _INTEGRATION_VERSION = _read_integration_version()
 _LOG_QUEUE: "_queue.Queue[dict]" = _queue.Queue(maxsize=2000)
 _WRITER_STARTED = False
 _WRITER_LOCK = _threading.Lock()
+_WRITER_THREAD: "_threading.Thread | None" = None
+# Pushed to the queue to tell the writer thread to exit (distinct from None,
+# which the loop ignores). An object() sentinel can't collide with a log entry.
+_WRITER_STOP = object()
 
 
 def _log_writer_loop() -> None:
-    """Drain the log queue and write to disk. Runs on a daemon thread."""
+    """Drain the log queue and write to disk. Runs on a daemon thread.
+
+    Exits when it dequeues the _WRITER_STOP sentinel (pushed by
+    stop_log_writer), flushing anything queued ahead of it first.
+    """
     while True:
         entry = _LOG_QUEUE.get()
         try:
+            if entry is _WRITER_STOP:
+                return
             if entry is None:
                 continue
             _LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -1584,7 +1594,7 @@ def _log_writer_loop() -> None:
 
 def _ensure_writer() -> None:
     """Start the background writer thread once, lazily."""
-    global _WRITER_STARTED
+    global _WRITER_STARTED, _WRITER_THREAD
     if _WRITER_STARTED:
         return
     with _WRITER_LOCK:
@@ -1594,7 +1604,40 @@ def _ensure_writer() -> None:
             target=_log_writer_loop, name="jarvis-log-writer", daemon=True,
         )
         t.start()
+        _WRITER_THREAD = t
         _WRITER_STARTED = True
+
+
+def stop_log_writer(timeout: float = 2.0) -> None:
+    """Stop the background log-writer thread (idempotent).
+
+    Called on unload so the thread does not outlive the config entry and leak
+    across reloads. Safe to call when the writer was never started. This blocks
+    briefly to join the thread, so callers on the event loop should run it in an
+    executor. The thread wakes from its blocking get() the moment the sentinel
+    is dequeued, so the join returns almost immediately in practice.
+    """
+    global _WRITER_STARTED, _WRITER_THREAD
+    with _WRITER_LOCK:
+        t = _WRITER_THREAD
+        _WRITER_STARTED = False
+        _WRITER_THREAD = None
+        if t is None:
+            return
+        try:
+            _LOG_QUEUE.put_nowait(_WRITER_STOP)
+        except _queue.Full:
+            # Queue is saturated; make room so the stop sentinel gets through.
+            try:
+                _LOG_QUEUE.get_nowait()
+                _LOG_QUEUE.task_done()
+                _LOG_QUEUE.put_nowait(_WRITER_STOP)
+            except Exception:
+                pass
+    try:
+        t.join(timeout=timeout)
+    except Exception:
+        pass
 
 
 def _persist_log_entry(entry: dict) -> None:
