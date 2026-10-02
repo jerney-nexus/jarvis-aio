@@ -292,6 +292,8 @@ If JARVIS makes your home a little smarter, you can support continued developmen
 
 <a href="https://www.buymeacoffee.com/sam3gp8"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" height="48" alt="Buy Me A Coffee"></a>
 
+The other big help is word of mouth. If JARVIS has automated something useful for you, mention it the next time someone in a Home Assistant group asks "what do you automate?", or star the repo so others can find it.
+
 Bugs and feature requests go to [GitHub Issues](https://github.com/sam3gp8/jarvis-aio/issues). Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
