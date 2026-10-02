@@ -21,8 +21,10 @@ from .event import (
     from_state_changed,
     from_voice_turn,
 )
+from . import situation
 from .event_bus import JarvisEventBus
 from .ledger import EventLedger
+from .situation import InvalidTransition, Situation, SituationManager
 from .world_model import WorldModel
 
 __all__ = [
@@ -38,4 +40,8 @@ __all__ = [
     "JarvisEventBus",
     "EventLedger",
     "WorldModel",
+    "situation",
+    "Situation",
+    "SituationManager",
+    "InvalidTransition",
 ]
