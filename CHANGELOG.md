@@ -1,3 +1,18 @@
+## [8.20.0] — fix: "database is locked" on the conversation store
+
+Repairs the log errors *"conversation DB connect/schema failed: database is locked"* (database.py:71) and *"JARVIS activity log read error: database is locked"* (database.py:224).
+
+The conversation store (`conversations.db`, which also holds the activity log) was opened with **no busy-timeout and in rollback-journal mode**, so any concurrent access — the observer/agent writing while diagnostics or the activity feed read — failed *immediately* with "database is locked" instead of waiting. This clustered at startup, when several subsystems touch the store at once.
+
+`_connect()` now:
+
+- opens with a **15 s busy-timeout** (+ matching `PRAGMA busy_timeout`) so a contended connection waits for the lock instead of raising at once;
+- switches the database to **WAL journal mode** (best-effort; skipped gracefully on a read-only FS), so a reader and a writer can hold the DB at the same time — the same concurrency model HA's own recorder uses.
+
+New regression tests (4): WAL + busy-timeout are enabled; a read succeeds while a write transaction is open; repeated open/use/close stays lock-free; `health()` is OK. Full suite green. No schema or API change.
+
+> Note: the ESPHome *"intent recognition engine conversation.jarvis is not found"* errors in the same boot are a **startup race**, not a JARVIS defect — the voice satellites reach the agent before JARVIS has finished registering its `conversation.jarvis` entity during boot. They clustered in ~1 second at startup and then stopped; the entity id is correct. Reducing startup lock contention (this release) should make the window smaller.
+
 ## [8.19.0] — fix: infrastructure audit no longer dropped to a hardcoded area
 
 Repairs the log warning *"jarvis.speak: unknown area 'office' — ignoring"*. The 15-minute infrastructure-health audit spoke its alerts to a hardcoded placeholder area (`AUDIT_TARGET_AREA = "office"`). On any install without an "office" area — the common case — every audit alert was **silently dropped** at the speak gate.

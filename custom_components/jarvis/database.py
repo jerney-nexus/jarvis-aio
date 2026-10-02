@@ -50,13 +50,32 @@ CREATE INDEX IF NOT EXISTS idx_activity_ts ON activity_log(timestamp);
 _last_error: Optional[str] = None   # last connect/schema failure, for diagnostics
 
 
+# How long a contended connection waits for a lock before giving up. The
+# conversation store is written by the observer/agent while diagnostics and the
+# activity feed read it, so without this a concurrent access raised "database is
+# locked" immediately (see database.py read/connect errors).
+_BUSY_TIMEOUT_S = 15.0
+
+
 def _connect() -> sqlite3.Connection:
     global _last_error
     conn: sqlite3.Connection | None = None
     try:
         DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(str(DB_PATH), factory=ClosingConnection)
+        # timeout → wait for a lock instead of raising "database is locked" at
+        # once; WAL → a reader and a writer can hold the DB at the same time
+        # (the recorder-style concurrency HA itself uses). busy_timeout is the
+        # same wait expressed as a pragma, for the WAL checkpointer too.
+        conn = sqlite3.connect(
+            str(DB_PATH), timeout=_BUSY_TIMEOUT_S, factory=ClosingConnection)
         conn.row_factory = sqlite3.Row
+        try:
+            conn.execute("PRAGMA journal_mode=WAL")
+        except sqlite3.Error:
+            # A read-only FS or an exclusive lock can refuse the switch; the
+            # busy_timeout below still prevents the immediate-lock failures.
+            pass
+        conn.execute(f"PRAGMA busy_timeout={int(_BUSY_TIMEOUT_S * 1000)}")
         conn.executescript(SCHEMA)
         conn.commit()
         _last_error = None
