@@ -845,18 +845,27 @@ class SafetyManager:
             if vision is True:
                 confirmed, reason = True, "a person is on camera (confirmed by vision)"
             elif vision is False:
-                # Frigate said person, JARVIS's eyes say no → false positive.
-                # Do NOT escalate on the camera signal; require a real inward
-                # route through the house instead (v6.74.0).
-                _LOGGER.info("intrusion: Frigate person on %s NOT confirmed by "
-                             "vision — requiring inward motion route", cam_entity)
-                if inv.get("breach_area"):
-                    confirmed = inward
-                    reason = ("someone is moving inward through the house from "
-                              "the point of entry")
-                else:
-                    confirmed = spread and sustained
-                    reason = "sustained movement through the house while no one is home"
+                # JARVIS's OWN eyes checked the camera that covers the breach and
+                # saw NO person (an empty room — a shadow, a pet, a reflection, or
+                # the resident already gone). The camera is authoritative for the
+                # area it covers, so a motion-propagation heuristic must NOT
+                # override a clear visual negative and fire a CONFIRMED critical
+                # alarm. Doing so produced false "someone is moving inward"
+                # confirmations from a resident leaving, a garage-door motor or a
+                # pet while the covering camera plainly showed no one (bug: a
+                # driveway-side false alarm with an empty garage, camera-confirm on).
+                #
+                # Keep investigating instead of confirming: we still escalate the
+                # instant vision sees a real person on a later tick, and the
+                # no-response path below still sends a soft "couldn't reach you,
+                # please check" notice for an unanswered, ongoing event — without
+                # masquerading as a confirmed break-in. This honours the user's
+                # expectation that cameras confirm intrusions.
+                _LOGGER.info(
+                    "intrusion: breach cleared by vision on %s (no person visible) "
+                    "— not confirming on motion alone", cam_entity)
+                confirmed = False
+                reason = "motion while away, but the covering camera shows no one"
             else:
                 # Vision inconclusive/unavailable → fall back to prior behavior
                 # (trust the camera) so a broken vision path never suppresses a

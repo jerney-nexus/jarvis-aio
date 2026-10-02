@@ -392,6 +392,34 @@ async def test_motion_progressing_inward_confirms(safety, fake_hass, clock, monk
         "motion reaching the required inward depth should confirm a real intrusion"
 
 
+async def test_vision_negative_blocks_inward_confirmation(safety, fake_hass, clock, monkeypatch, cc):
+    """Regression (the driveway false alarm): when a camera COVERS the breach and
+    JARVIS's own vision checks it and sees NO person, a motion-propagation route
+    must NOT override that clear visual negative and fire a confirmed intrusion.
+    Camera-confirm on + empty garage → no 'moving inward' confirmation."""
+    import sys
+    sys.modules.pop("jc.intrusion", None)
+    _breach_with_hops(safety, monkeypatch, {"kitchen": 0, "hall": 1, "living": 2})
+    _person_cam(safety, monkeypatch)                 # a camera covers the breach
+    _vision_says(safety, monkeypatch, False)         # JARVIS's eyes: empty room
+    fake_hass.states.set("person.sam", "not_home")
+    fake_hass.states.set("binary_sensor.kitchen_window", "on", device_class="window")
+    fake_hass.states.set("binary_sensor.kitchen_motion", "on", device_class="motion")
+    await _intr(safety, fake_hass)                    # investigating at breach
+    # drive the same inward route that WOULD confirm without a camera…
+    clock["now"] += 20
+    fake_hass.states.set("binary_sensor.kitchen_motion", "off", device_class="motion")
+    fake_hass.states.set("binary_sensor.hall_motion", "on", device_class="motion")
+    await _intr(safety, fake_hass)
+    clock["now"] += 20
+    fake_hass.states.set("binary_sensor.hall_motion", "off", device_class="motion")
+    fake_hass.states.set("binary_sensor.living_motion", "on", device_class="motion")
+    out = await _intr(safety, fake_hass)
+    assert [a for a in out if a.get("type") == "intrusion_confirmed"] == [], \
+        "vision saw no one on the covering camera — motion alone must not confirm"
+    assert safety._investigation is not None, "should keep investigating, not escalate"
+
+
 async def test_inward_depth_is_configurable(safety, fake_hass, clock, monkeypatch, cc):
     # with intrusion_inward_depth=1, reaching just one room in confirms
     import sys
