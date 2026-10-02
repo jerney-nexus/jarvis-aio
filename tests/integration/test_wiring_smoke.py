@@ -1,54 +1,72 @@
 """Integration smoke tests against a real Home Assistant instance (PHACC).
 
-These are the wiring tests the hand-rolled fakes cannot prove: that the
-integration actually sets up, registers its conversation agent, and that the
-config flow validates input. They are intentionally few — the bulk of coverage
-lives in tests/unit/ where it is fast and deterministic.
+These prove what the unit fakes cannot: that the integration actually sets up
+under a real `hass`, registers its services, and tears down cleanly on unload
+and reload — the install / setup / reload / unload path. Run locally (or in CI)
+where pytest-homeassistant-custom-component is installed; the directory conftest
+skips them cleanly when it is absent.
 
-Skipped unless pytest-homeassistant-custom-component is installed (see the
-directory conftest). The bodies below are scaffolds: wire them to the real
-DOMAIN/config-flow shape, then enable.
+Provider construction is mocked: the integration imports its LLM SDKs lazily, so
+once create_provider is stubbed, setup needs no groq/openai/etc. at all.
 """
-import pytest
+from unittest.mock import patch
 
-from homeassistant.setup import async_setup_component  # noqa: E402
-
-from .conftest import MockConfigEntry  # noqa: E402
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 DOMAIN = "jarvis"
 
-
-@pytest.mark.skip(reason="scaffold — wire to the real config-entry data, then enable")
-async def test_setup_entry_registers_integration(hass):
-    """Setting up a config entry should leave the integration loaded and its
-    runtime data registered under hass.data[DOMAIN]."""
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        data={"llm_provider": "ollama", "llm_base_url": "http://localhost:11434/v1"},
-        options={},
-    )
-    entry.add_to_hass(hass)
-    assert await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
-    assert DOMAIN in hass.data
+ENTRY_DATA = {
+    "api_key": "", "model": "llama3.1", "honorific": "Sir",
+    "llm_provider": "ollama", "llm_base_url": "http://localhost:11434/v1",
+    "schema_version": 7,
+}
 
 
-@pytest.mark.skip(reason="scaffold — assert the agent id once registration lands")
-async def test_conversation_agent_is_registered(hass):
-    """JARVIS should register as a conversation agent so it can be selected as
-    the assist pipeline's conversation engine."""
-    assert await async_setup_component(hass, "conversation", {})
-    # ... after entry setup, assert the jarvis agent is discoverable.
+class _FakeProvider:
+    name = "fake"
+
+    def chat(self, *a, **k):
+        return {"text": "", "tool_calls": [], "raw": None}
+
+    def supports_vision(self):
+        return False
 
 
-@pytest.mark.skip(reason="scaffold — exercise the real config_flow steps, then enable")
-async def test_config_flow_accepts_local_llm(hass):
-    """A local (Ollama) endpoint with no cloud key must be a valid config — the
-    v6.7.0 'local-first install' contract."""
+def _entry():
+    return MockConfigEntry(domain=DOMAIN, data=ENTRY_DATA, options={}, unique_id=DOMAIN)
+
+
+def _mock_provider():
+    return patch("custom_components.jarvis.create_provider", return_value=_FakeProvider())
+
+
+async def test_config_flow_opens(hass):
     result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": "user"})
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        {"llm_base_url": "http://localhost:11434/v1"},
-    )
-    assert result["type"] == "create_entry"
+    assert result["type"] in ("form", "menu")
+
+
+async def test_setup_and_unload_lifecycle(hass):
+    entry = _entry()
+    entry.add_to_hass(hass)
+    with _mock_provider():
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+    assert DOMAIN in hass.data and entry.entry_id in hass.data[DOMAIN]
+    assert hass.services.has_service(DOMAIN, "analyze_camera")
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+    assert entry.entry_id not in hass.data.get(DOMAIN, {})
+    assert not hass.services.has_service(DOMAIN, "analyze_camera")
+
+
+async def test_reload_leaves_integration_loaded(hass):
+    entry = _entry()
+    entry.add_to_hass(hass)
+    with _mock_provider():
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        await hass.config_entries.async_reload(entry.entry_id)
+        await hass.async_block_till_done()
+    assert entry.entry_id in hass.data[DOMAIN]
+    assert hass.services.has_service(DOMAIN, "analyze_camera")
