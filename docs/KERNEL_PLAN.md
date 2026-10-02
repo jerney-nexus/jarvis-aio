@@ -17,7 +17,7 @@ JARVIS stays shippable throughout.
 | 3 — Situation manager | ✅ Shipped | 8.8.0 (machine), 8.8.1 (intrusion shadow) |
 | 4 — Authority / capability engine | 🚧 In progress | 8.9.0 |
 | 5 — Planner → Executor → Verifier | 🚧 In progress | 8.10.0 |
-| 6 — Beliefs · Attention · Model Router | ⬜ Not started | 8.11.0 |
+| 6 — Beliefs · Attention · Model Router | 🚧 In progress | 8.11.0 |
 | 7 — Causal learning | ⬜ Not started | 8.12.0 |
 
 _Kept current as each phase merges._
@@ -147,7 +147,7 @@ tests.
 
 ## Phase 6 — Beliefs · Attention · Model Router
 
-Target release: **8.11.0**
+Target release: **8.11.0** — **🚧 In progress** (pure `kernel/beliefs.py`, `kernel/attention.py`, `kernel/router.py` shipped in 8.11.0; callers delegate to them, parity-checked, to follow. Router lives in `kernel/` to share the kernel test harness.)
 
 - `kernel/beliefs.py`: probabilistic beliefs (evidence, source, decay,
   contradiction) seeded from knowledge confidence.

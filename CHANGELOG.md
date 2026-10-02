@@ -1,3 +1,13 @@
+## [8.11.0] — kernel Phase 6: beliefs · attention · model router
+
+Phase 6 of the kernel plan (docs/KERNEL_PLAN.md): three pure primitives that formalise judgement JARVIS makes ad hoc today. **Additive**: nothing is routed through them yet, so there is no behaviour or settings change.
+
+- **`kernel/beliefs.py`** — probabilistic beliefs via log-odds pooling: a `Belief` holds a proposition's probability backed by `Evidence` (source, supports/refutes, weight), combines independent evidence sensibly (probability stays in (0,1)), applies optional **time decay** toward 0.5 without ever flipping past it, and surfaces **contradiction** (evidence on both sides) with a 0..1 strength. Seedable from the knowledge store's flat confidences.
+- **`kernel/attention.py`** — centralised interruption arbitration (the job split across `output_gate` + the adaptive budget): `arbitrate(request, context)` → **ALLOW / DEFER / SUPPRESS**. CRITICAL overrides quiet-hours/shush/budget (but a genuine duplicate is still suppressed); shush/duplicate suppress non-critical; quiet-hours / exhausted budget / too-many-recent defer the lower tiers.
+- **`kernel/router.py`** — local-first model/provider routing: `route(requirements, providers)` picks the best eligible provider by capability, privacy (any / prefer-local / local-only), latency cap, cost cap and min-quality, preferring local when it clears the bar.
+
+All three are pure (no HA import, no I/O — live state is injected), so each can be parity-checked against the current gate/provider logic before anything delegates to it. New unit tests (26). Audit clean (125 modules); full suite green.
+
 ## [8.10.0] — kernel Phase 5: planner → executor → verifier
 
 Phase 5 of the kernel plan (docs/KERNEL_PLAN.md): formalises what `goals.py` + the agent do ad hoc into explicit plan objects with preconditions, **postcondition verification as a first-class step** (verify-after-act, not a bolt-on), and an `idempotency_key` so a retried or replayed plan never double-acts. **Additive and pure**: ships now; `goals`/agent adoption follows, so there is no behaviour change.

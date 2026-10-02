@@ -21,15 +21,18 @@ from .event import (
     from_state_changed,
     from_voice_turn,
 )
-from . import authority, plan, situation
+from . import attention, authority, beliefs, plan, router, situation
+from .attention import AttentionContext, AttentionDecision, AttentionRequest, arbitrate
 from .authority import (
     AuthorityDecision,
     AuthorityRequest,
     CapabilityToken,
     authorize,
 )
+from .beliefs import Belief, Evidence
 from .event_bus import JarvisEventBus
 from .plan import Plan, PlanReport, Step, StepOutcome, execute_plan
+from .router import Provider, RouteResult, TaskRequirements, route
 from .ledger import EventLedger
 from .situation import InvalidTransition, Situation, SituationManager
 from .world_model import WorldModel
@@ -62,4 +65,17 @@ __all__ = [
     "StepOutcome",
     "PlanReport",
     "execute_plan",
+    "beliefs",
+    "Belief",
+    "Evidence",
+    "attention",
+    "arbitrate",
+    "AttentionRequest",
+    "AttentionContext",
+    "AttentionDecision",
+    "router",
+    "route",
+    "Provider",
+    "TaskRequirements",
+    "RouteResult",
 ]
