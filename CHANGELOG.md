@@ -1,3 +1,13 @@
+## [8.21.1] — fix: false "intrusion confirmed" when the covering camera shows no one
+
+A window/motion trip while away escalated to a **confirmed intrusion** ("someone is moving inward through the house from the point of entry") even though JARVIS's own camera saw an **empty** room — a false alarm fired while the resident was sitting in the driveway, with camera-confirm enabled and the garage empty.
+
+**Root cause.** In `cognitive_core` the intrusion investigator asks JARVIS's vision model for a second opinion on the camera that covers the breach. That helper's contract is explicit: `False` = *"vision says no person — don't escalate."* But the caller ignored it: on `vision is False` it fell through to `confirmed = inward`, letting a **sensor motion-propagation heuristic override a clear visual negative**. So a resident leaving, a garage-door motor, a pet, or sensor cross-talk could form an "inward route" and fire a critical alarm while the covering camera plainly showed no one.
+
+**Fix.** When vision explicitly clears the breach (`vision is False`), the camera is authoritative for the area it covers: JARVIS no longer confirms on motion alone. It keeps **investigating** — it still escalates the instant vision sees a real person, and the existing no-response path still sends a soft "couldn't reach you, please check" notice for an unanswered, ongoing event (it does not masquerade as a confirmed break-in). The no-camera and vision-unavailable paths are unchanged (the latter still fails toward alerting, so a broken vision model never suppresses a real intrusion).
+
+Regression test added (covered breach + vision = no person + full inward motion → **no** confirmation, keeps investigating). The inward-route confirmation **without** a camera still fires as before. Audit clean; full suite green.
+
 ## [8.21.0] — fix: JARVIS no longer nags about minor infrastructure health
 
 Stops the continual spoken announcements of minor infrastructure issues every audit cycle.
