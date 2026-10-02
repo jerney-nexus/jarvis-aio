@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import logging
 import time
+import uuid
 from dataclasses import dataclass, field
 from typing import Callable, Dict, FrozenSet, Iterable, Optional
 
@@ -87,19 +88,36 @@ class CapabilityToken:
     capabilities: FrozenSet[str] = frozenset()
     issuer: Optional[str] = None
     scope: Optional[str] = None
+    expires_at: Optional[float] = None       # epoch seconds; None = no expiry
+    token_id: str = field(default_factory=lambda: "cap_" + uuid.uuid4().hex)
 
     def grants(self, capability: str) -> bool:
         return "*" in self.capabilities or capability in self.capabilities
 
+    def expired(self, now: Optional[float] = None) -> bool:
+        if self.expires_at is None:
+            return False
+        return (time.time() if now is None else now) >= self.expires_at
+
     def derive(self, holder: str, capabilities: Iterable[str],
-               *, scope: Optional[str] = None) -> "CapabilityToken":
+               *, scope: Optional[str] = None,
+               ttl: Optional[float] = None,
+               now: Optional[float] = None) -> "CapabilityToken":
         """A child token for ``holder``. Its capabilities are the requested set
         **intersected** with this token's — delegation narrows, never escalates.
+        Its expiry is the earlier of the parent's and any ``ttl`` (seconds from
+        ``now``), so a child never outlives its issuer.
         """
         requested = frozenset(capabilities)
         granted = requested if "*" in self.capabilities else (requested & self.capabilities)
+        child_expiry = self.expires_at
+        if ttl is not None:
+            base = time.time() if now is None else now
+            cand = base + ttl
+            child_expiry = cand if child_expiry is None else min(child_expiry, cand)
         return CapabilityToken(holder=holder, capabilities=granted,
-                               issuer=self.holder, scope=scope or self.scope)
+                               issuer=self.holder, scope=scope or self.scope,
+                               expires_at=child_expiry)
 
 
 @dataclass(frozen=True)
@@ -114,6 +132,8 @@ class AuthorityRequest:
     intent: Optional[str] = None
     scope: Optional[str] = None
     ts: float = field(default_factory=time.time)
+    now: Optional[float] = None                 # eval time for token expiry
+    revoked: FrozenSet[str] = frozenset()       # revoked token_ids
 
 
 @dataclass(frozen=True)
@@ -144,10 +164,18 @@ def default_policy(req: AuthorityRequest) -> AuthorityDecision:
     cap = req.capability
     sev = sensitivity(cap)
 
-    # 1. Delegation can't escalate: a token-bearing actor must hold the capability.
-    if req.token is not None and not req.token.grants(cap):
-        return AuthorityDecision(
-            DENY, f"{req.actor}'s token does not grant '{cap}'", cap, sev)
+    # 1. Delegation can't escalate: a token-bearing actor must hold the capability,
+    #    and the token must be live (not expired, not revoked).
+    if req.token is not None:
+        if not req.token.grants(cap):
+            return AuthorityDecision(
+                DENY, f"{req.actor}'s token does not grant '{cap}'", cap, sev)
+        if req.token.token_id in req.revoked:
+            return AuthorityDecision(
+                DENY, f"{req.actor}'s token has been revoked", cap, sev)
+        if req.token.expired(req.now):
+            return AuthorityDecision(
+                DENY, f"{req.actor}'s token has expired", cap, sev)
 
     # 2. Security-sensitive capabilities require explicit authority.
     if sev == SECURITY:
@@ -168,6 +196,57 @@ def default_policy(req: AuthorityRequest) -> AuthorityDecision:
 
     # 4. Safe capabilities.
     return AuthorityDecision(ALLOW, "safe capability", cap, sev)
+
+
+@dataclass
+class AuthorityParity:
+    """Log-only parity tracker for the enforcement rollout.
+
+    Callers compute ``authorize()`` alongside their existing behaviour and
+    ``record`` the engine decision against what actually happened (one of ALLOW /
+    DENY / CONFIRM). Enforcement is flipped on only once agreement is high on real
+    traffic — this is how the safety keystone is proven before it can block.
+    """
+
+    agree: int = 0
+    disagree: int = 0
+    by_capability: Dict[str, list] = field(default_factory=dict)
+    recent_mismatches: list = field(default_factory=list)
+    _max_mismatches: int = 50
+
+    def record(self, decision: "AuthorityDecision", actual: str) -> bool:
+        """Record one engine-vs-actual comparison; returns True on agreement."""
+        ok = decision.decision == actual
+        cap = decision.capability
+        bucket = self.by_capability.setdefault(cap, [0, 0])
+        if ok:
+            self.agree += 1
+            bucket[0] += 1
+        else:
+            self.disagree += 1
+            bucket[1] += 1
+            self.recent_mismatches.append(
+                {"capability": cap, "engine": decision.decision,
+                 "actual": actual, "reason": decision.reason})
+            if len(self.recent_mismatches) > self._max_mismatches:
+                del self.recent_mismatches[:-self._max_mismatches]
+        return ok
+
+    @property
+    def total(self) -> int:
+        return self.agree + self.disagree
+
+    @property
+    def agreement_rate(self) -> float:
+        return (self.agree / self.total) if self.total else 1.0
+
+    def summary(self) -> dict:
+        return {
+            "agree": self.agree, "disagree": self.disagree,
+            "agreement_rate": self.agreement_rate,
+            "by_capability": dict(self.by_capability),
+            "recent_mismatches": list(self.recent_mismatches),
+        }
 
 
 def authorize(request: AuthorityRequest, *, policy: Optional[Policy] = None) -> AuthorityDecision:

@@ -1,3 +1,13 @@
+## [8.13.0] — kernel hardening H1: authority enforcement (log-only) + token expiry/revocation
+
+First of the post-migration hardening items from the architecture-audit review (docs/KERNEL_PLAN.md → "Post-migration hardening"). **No behaviour change** — authority runs in **log-only parity mode**; nothing is blocked that wasn't already.
+
+- **Capability expiry + revocation** — `CapabilityToken` gains `expires_at` and a `token_id`; `authorize()` now denies an **expired** or **revoked** token (by id). `derive(..., ttl=)` clamps a child token's expiry to its parent's, so a delegated token never outlives its issuer.
+- **`AuthorityParity`** — a log-only tracker that compares the authority engine's decision to what actually happened (ALLOW / DENY / CONFIRM), tallying agreement per capability with recent mismatches. This is the evidence needed before enforcement is ever flipped from parity to deny.
+- **Actuator wiring (log-only)** — `agent._exec_control_device` now records engine-vs-gate parity through `authority_bridge` right where `policy.confirm_gate` already decides. It never changes the gate's outcome; the tally lives in `hass.data` and is exposed via `authority_bridge.parity_summary()`.
+
+New unit tests (11: 6 authority expiry/revocation/parity + 5 bridge). Audit clean; full suite green. Flipping authority to actually enforce remains a separate, owner-gated step once parity holds on real traffic.
+
 ## [8.12.0] — kernel Phase 7: causal learning (final phase)
 
 Phase 7 of the kernel plan (docs/KERNEL_PLAN.md) — the last one. Gives `pattern_analyzer` / `rca` / `feedback` a shared, principled measure of *whether a cause actually drives an effect*, closing the loop observation → hypothesis → action → outcome → **causal confidence**. **Additive and pure**: ships now; the learning modules adopt it later, so there is no behaviour change.

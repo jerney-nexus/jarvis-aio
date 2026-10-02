@@ -26,6 +26,7 @@ from .causal import CausalHypothesis, CausalModel
 from .attention import AttentionContext, AttentionDecision, AttentionRequest, arbitrate
 from .authority import (
     AuthorityDecision,
+    AuthorityParity,
     AuthorityRequest,
     CapabilityToken,
     authorize,
@@ -59,6 +60,7 @@ __all__ = [
     "authorize",
     "AuthorityRequest",
     "AuthorityDecision",
+    "AuthorityParity",
     "CapabilityToken",
     "plan",
     "Plan",
