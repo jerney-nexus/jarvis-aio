@@ -1,3 +1,14 @@
+## [8.18.0] — fix: appliance monitor AttributeError on native appliances
+
+Repairs the log warning *"Appliance monitor start failed (non-fatal): '_NativeAppliance' object has no attribute 'trigger_state'"*.
+
+`_NativeAppliance` carries `trigger_states` (a frozenset of the state values that mean "done"), but two call sites read the non-existent singular `trigger_state`:
+
+- `appliance_monitor.start()` — the per-appliance profile log (line ~1348) raised `AttributeError` whenever a native smart appliance (Samsung/LG run-completed sensor, etc.) was present, aborting the rest of `start()` — so the native-appliance announcements and whole-home delta setup never came up.
+- `appliance_monitor.status()` — the diagnostics dict (line ~1408) had the same broken key.
+
+Both now use the frozenset: the log joins it (`"on|finished"`) and the diagnostics dict exposes `trigger_states` (sorted list). Regression test added (`status()` with a native appliance no longer raises and reports the set). Full suite green. No other behaviour change.
+
 ## [8.17.0] — fix: event-loop thread-safety for bus listeners
 
 Repairs the dominant warning/error class in the Home Assistant logs (HA 2026.x): JARVIS was calling loop-only APIs from executor threads, which HA's thread-safety guard flags as *"calls `…` from a thread other than the event loop, which may cause Home Assistant to crash or data to corrupt"* — and which left the `_process_event` coroutine **never awaited**.
