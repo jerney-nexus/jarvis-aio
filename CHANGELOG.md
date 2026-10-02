@@ -1,3 +1,12 @@
+## [8.8.1] — kernel Phase 3: intrusion adopts the situation machine (shadow)
+
+Completes Phase 3 by wiring `intrusion` as the first consumer of the `kernel.situation` machine (added in 8.8.0), running **in shadow mode** alongside the existing authoritative path. The intrusion lifecycle is mirrored into a durable situation so the generalised machine can be proven to track the same episodes before anything flips onto it. **No behaviour change** — the mirror is entirely best-effort and never affects intrusion handling.
+
+- `intrusion.async_record_event` and `async_dismiss_intrusion` now mirror each lifecycle event into a `SituationManager`, off the event loop: `investigating → open + INVESTIGATING`, `confirmed → CONFIRMED`, `unresolved → RESOLVED`, dismissal → `BENIGN → RESOLVED`. A new episode opens on the next `investigating` after one resolves.
+- The mirror is wired **after** the dismissal's shielded decision-record persist, so it can't change the critical path's cancellation semantics, and a mirror failure is swallowed.
+
+New unit tests (8) covering the full episode mappings, idempotent re-entry, new-episode-after-resolution, and failure isolation. Audit clean (120 modules); full suite green.
+
 ## [8.8.0] — kernel Phase 3: durable situation state machine
 
 Phase 3 of the kernel plan (docs/KERNEL_PLAN.md): generalises the ad-hoc intrusion state machine (scattered across `intrusion.py` and the SafetyManager) into one reusable, durable, correlated **situation** lifecycle that any flow — intrusion first, delivery and hazards later — can drive. **Additive and opt-in**: the machine ships now; no existing flow is migrated onto it yet, so there is no behaviour or settings change.

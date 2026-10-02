@@ -14,7 +14,7 @@ JARVIS stays shippable throughout.
 | 0 — Foundations & guardrails | ✅ Shipped | 8.4.3 (HA lifecycle tests + CI gate), 8.5.0 (`JarvisEvent` + persistence seam) |
 | 1 — Event bus + correlated ledger | ✅ Shipped | 8.6.0 |
 | 2 — World-model facade | ✅ Shipped | 8.7.0 |
-| 3 — Situation manager | 🚧 In progress | 8.8.0 |
+| 3 — Situation manager | ✅ Shipped | 8.8.0 (machine), 8.8.1 (intrusion shadow) |
 | 4 — Authority / capability engine | ⬜ Not started | 8.9.0 |
 | 5 — Planner → Executor → Verifier | ⬜ Not started | 8.10.0 |
 | 6 — Beliefs · Attention · Model Router | ⬜ Not started | 8.11.0 |
@@ -110,7 +110,7 @@ Risk: low (read-only). Guard: per-caller opt-in; parity test vs. direct HA reads
 
 ## Phase 3 — Situation manager
 
-Target release: **8.8.0** — **🚧 In progress** (durable `kernel/situation.py` machine shipped in 8.8.0; `intrusion` parallel-run adoption to follow).
+Target release: **8.8.0** — **✅ Shipped** (durable `kernel/situation.py` machine in 8.8.0; `intrusion` adopted it in shadow mode in 8.8.1, running parallel to the authoritative path until verdicts match).
 
 - `kernel/situation.py`: generalize `intrusion.py`'s state machine into durable,
   correlated situations (normal → possible → investigating → confirmed/benign →
