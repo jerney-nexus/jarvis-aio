@@ -80,6 +80,7 @@ def async_register(hass: HomeAssistant) -> None:
         websocket_api.async_register_command(hass, ws_diagnostics)
         websocket_api.async_register_command(hass, ws_voice_confirm_test)
         websocket_api.async_register_command(hass, ws_intrusion)
+        websocket_api.async_register_command(hass, ws_faces)
         websocket_api.async_register_command(hass, ws_mode)
         websocket_api.async_register_command(hass, ws_energy)
         websocket_api.async_register_command(hass, ws_hazard)
@@ -2708,6 +2709,47 @@ async def ws_intrusion(
     except Exception as exc:
         _LOGGER.exception("ws_intrusion failed: %s", exc)
         connection.send_error(msg["id"], "intrusion_failed", str(exc))
+
+
+@websocket_api.websocket_command({
+    vol.Required("type"): "jarvis/faces",
+    vol.Optional("action"): vol.In(["list", "add_resident", "remove_resident"]),
+    vol.Optional("name"): str,
+    vol.Optional("limit"): int,
+})
+@websocket_api.async_response
+async def ws_faces(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict,
+) -> None:
+    """Household Faces panel (#140): list recently recognized / unknown faces
+    and manage the resident whitelist. JARVIS reads identity from the vision
+    backend; this only curates the 'who is a resident' flag layered on top."""
+    try:
+        from . import recognition, face_roster
+        action = msg.get("action", "list")
+        # Roster file I/O happens on the executor; the read below then runs on the
+        # event loop against an already-loaded roster (no blocking file read).
+        if action == "add_resident" and msg.get("name"):
+            await hass.async_add_executor_job(face_roster.add_resident, msg["name"])
+            jarvis_log("CAMERA", f"Household resident added: {msg['name']}")
+        elif action == "remove_resident" and msg.get("name"):
+            await hass.async_add_executor_job(face_roster.remove_resident, msg["name"])
+            jarvis_log("CAMERA", f"Household resident removed: {msg['name']}")
+        else:
+            await hass.async_add_executor_job(face_roster._load)
+        recent = recognition.recent_faces(hass, int(msg.get("limit", 20)))
+        entry = _get_entry(hass)
+        connection.send_result(msg["id"], {
+            "recent": recent,
+            "residents": face_roster.residents(),
+            "recognition_source": str(
+                _runtime_opt(hass, entry, "recognition_source", "both") or "both"),
+        })
+    except Exception as exc:
+        _LOGGER.exception("ws_faces failed: %s", exc)
+        connection.send_error(msg["id"], "faces_failed", str(exc))
 
 
 @websocket_api.websocket_command({

@@ -4101,6 +4101,7 @@ dotLabel.textContent = lightBtn.classList.contains("adl")
     <button class="tab ${this._currentTab === 'dashboard' ? 'active' : ''}" data-tab="dashboard">Command Center</button>
     <button class="tab ${this._currentTab === 'residence' ? 'active' : ''}" data-tab="residence">Residence</button>
     <button class="tab ${this._currentTab === 'intrusion' ? 'active' : ''}" data-tab="intrusion">Intrusion</button>
+    <button class="tab ${this._currentTab === 'faces' ? 'active' : ''}" data-tab="faces">Faces</button>
     <button class="tab ${this._currentTab === 'suggestions' ? 'active' : ''}" data-tab="suggestions">Suggestions</button>
     <button class="tab ${this._currentTab === 'settings' ? 'active' : ''}" data-tab="settings">Settings</button>
     <button class="tab ${this._currentTab === 'logs' ? 'active' : ''}" data-tab="logs">Logs</button>
@@ -4269,6 +4270,25 @@ dotLabel.textContent = lightBtn.classList.contains("adl")
       <div class="mmwave-list" id="mmwave-list">
         <div class="mmwave-empty">Reading sensors…</div>
       </div>
+    </div>
+  </div>
+  ` : ''}
+
+  ${this._currentTab === 'faces' ? `
+  <!-- ═══ FACES TAB (#140) ═══ -->
+  <div class="faces-page">
+    <div class="panel faces-panel">
+      <div class="head">
+        <span>Faces</span>
+        <span class="side" id="faces-count">◉ WHITELIST</span>
+      </div>
+      <div class="mem-sub">Faces JARVIS recognizes from your vision backend — Frigate face recognition, or middleware like Double Take paired with external detectors such as CompreFace or DeepStack. JARVIS runs no face engine of its own; flag the people who live here as residents so it can tell a known face from an unknown one and stand intrusion monitoring down when the person it sees is a resident.</div>
+      <div class="faces-add-row">
+        <input class="cfg-field" id="faces-add-name" type="text" placeholder="Add a resident by name"/>
+        <button class="btn primary" id="faces-add-btn">+ Add resident</button>
+        <button class="btn" id="faces-refresh">⟳ Refresh</button>
+      </div>
+      <div class="faces-body" id="faces-body"><div class="mmwave-empty">Loading recognized faces…</div></div>
     </div>
   </div>
   ` : ''}
@@ -5463,6 +5483,9 @@ ${this._renderExcludedEntities(d)}
       this._wireHazard();
       this._wireBriefings();
       this._wireDocLibrary();
+    }
+    if (this._currentTab === 'faces') {
+      this._wireFaces();
     }
     if (this._currentTab === 'intrusion') {
       this._wireIntrusion();
@@ -7297,6 +7320,184 @@ ${this._renderExcludedEntities(d)}
 
   _wireIntrusion() {
     this._fetchIntrusion();
+  }
+
+  // ── Household Faces / resident whitelist (#140) ──
+  _wireFaces() {
+    const addBtn = this.shadowRoot?.getElementById("faces-add-btn");
+    const input = this.shadowRoot?.getElementById("faces-add-name");
+    const refresh = this.shadowRoot?.getElementById("faces-refresh");
+    const add = async () => {
+      const name = (input?.value || "").trim();
+      if (!name) return;
+      await this._facesAction("add_resident", name);
+      if (input) input.value = "";
+    };
+    addBtn?.addEventListener("click", add);
+    input?.addEventListener("keydown", (e) => { if (e.key === "Enter") add(); });
+    refresh?.addEventListener("click", () => this._fetchFaces());
+    this._fetchFaces();
+  }
+
+  async _facesAction(action, name) {
+    if (!this._hass) return;
+    try {
+      await this._hass.callWS({ type: "jarvis/faces", action, name });
+      this._toast(action === "remove_resident" ? "✓ removed resident" : "✓ added resident", "ok");
+      await this._fetchFaces();
+    } catch (err) {
+      this._toast(`✗ ${err?.message || err}`, "err");
+    }
+  }
+
+  async _fetchFaces() {
+    if (!this._hass) return;
+    try {
+      this._faces = await this._hass.callWS({ type: "jarvis/faces", action: "list", limit: 24 });
+    } catch (_) {
+      this._faces = { error: true };
+    }
+    this._renderFaces();
+  }
+
+  _renderFaces() {
+    const body = this.shadowRoot?.getElementById("faces-body");
+    if (!body) return;
+    const f = this._faces || {};
+    if (f.error) {
+      body.innerHTML = `<div class="mmwave-empty">Couldn't load — restart Home Assistant after updating.</div>`;
+      return;
+    }
+    const residents = Array.isArray(f.residents) ? f.residents : [];
+    const recent = Array.isArray(f.recent) ? f.recent : [];
+    const countEl = this.shadowRoot?.getElementById("faces-count");
+    if (countEl) countEl.textContent = `◉ ${residents.length} RESIDENT${residents.length === 1 ? "" : "S"}`;
+
+    // Freshest sighting per normalized name, so a resident's card can show the
+    // snapshot from the camera that last saw them.
+    const seenByName = {};
+    for (const r of recent) {
+      const k = (r.name || "").trim().toLowerCase();
+      if (!k) continue;
+      if (!seenByName[k] || (r.age_seconds || 0) < (seenByName[k].age_seconds || 0)) seenByName[k] = r;
+    }
+
+    // ── Section 1: Household (residents) ──
+    let html = `<div class="faces-section">
+      <div class="faces-section-head"><span>Household</span><span class="faces-section-sub">people who live here</span></div>`;
+    if (residents.length) {
+      html += `<div class="faces-gallery">` + residents.map(n => {
+        const seen = seenByName[(n || "").trim().toLowerCase()];
+        return this._faceCard({
+          name: n,
+          camera_entity: seen?.camera_entity,
+          camera: seen?.camera,
+          confidence: seen?.confidence,
+          age_seconds: seen ? seen.age_seconds : null,
+          relation: "resident",
+          actions: [{ label: "Remove", kind: "remove", name: n }],
+        });
+      }).join("") + `</div>`;
+    } else {
+      html += `<div class="mmwave-empty">No residents yet. Add the people who live here (or mark a recognized face below); recognized residents then won't trigger intrusion alerts.</div>`;
+    }
+    html += `</div>`;
+
+    // ── Section 2: Recently seen (non-residents: known-but-unlisted + unknown) ──
+    const others = recent.filter(r => !r.is_resident);
+    html += `<div class="faces-section">
+      <div class="faces-section-head"><span>Recently Seen</span><span class="faces-section-sub">not in the household</span></div>`;
+    if (others.length) {
+      html += `<div class="faces-gallery">` + others.map(r => this._faceCard({
+        name: r.name,
+        camera_entity: r.camera_entity,
+        camera: r.camera,
+        confidence: r.confidence,
+        age_seconds: r.age_seconds,
+        relation: r.is_unknown ? "unknown" : "known",
+        actions: r.is_unknown ? [] : [{ label: "+ Resident", kind: "add", name: r.name }],
+      })).join("") + `</div>`;
+    } else {
+      html += `<div class="mmwave-empty">No non-resident faces seen recently. When your backend names a face that isn't a resident, it appears here.</div>`;
+    }
+    html += `</div>`;
+
+    if (f.recognition_source) {
+      html += `<div class="faces-src">Reading identities from: <b>${this._esc(String(f.recognition_source))}</b> · snapshots are the live view from the camera that recognized the face.</div>`;
+    }
+
+    body.innerHTML = html;
+    body.querySelectorAll("[data-faces-add]").forEach(el =>
+      el.addEventListener("click", () => this._facesAction("add_resident", el.getAttribute("data-faces-add"))));
+    body.querySelectorAll("[data-faces-remove]").forEach(el =>
+      el.addEventListener("click", () => this._facesAction("remove_resident", el.getAttribute("data-faces-remove"))));
+    // Fill each card's snapshot from the camera that saw the subject.
+    body.querySelectorAll("img[data-faces-cam]").forEach(img =>
+      this._loadFaceSnap(img.getAttribute("data-faces-cam"), img));
+  }
+
+  // One face card: snapshot (or an initial placeholder) with the name under it.
+  _faceCard({ name, camera_entity, camera, confidence, age_seconds, relation, actions }) {
+    const safe = this._esc(name || "Unknown");
+    const initial = this._esc((name || "?").trim().charAt(0).toUpperCase() || "?");
+    const badge = relation === "resident" ? `<span class="faces-badge resident">RESIDENT</span>`
+      : relation === "unknown" ? `<span class="faces-badge unknown">UNKNOWN</span>` : "";
+    const thumb = camera_entity
+      ? `<img class="faces-thumb-img" data-faces-cam="${this._esc(camera_entity)}" alt="${safe}" style="display:none"/><div class="faces-thumb-ph">${initial}</div>`
+      : `<div class="faces-thumb-ph">${initial}</div>`;
+    const meta = [];
+    if (camera) meta.push(this._esc(String(camera).replace(/_/g, " ")));
+    if (relation !== "unknown" && confidence) meta.push(`${Math.round(confidence)}%`);
+    const age = this._facesAge(age_seconds);
+    if (age) meta.push(age);
+    else if (relation === "resident" && !camera_entity) meta.push("not seen recently");
+    const acts = (actions || []).map(a =>
+      `<button class="btn faces-mark" data-faces-${a.kind === "remove" ? "remove" : "add"}="${this._esc(a.name)}">${this._esc(a.label)}</button>`
+    ).join("");
+    return `<div class="faces-card">
+      <div class="faces-thumb">${thumb}${badge}</div>
+      <div class="faces-card-name">${safe}</div>
+      <div class="faces-card-meta">${meta.join(" · ")}</div>
+      ${acts ? `<div class="faces-card-act">${acts}</div>` : ""}
+    </div>`;
+  }
+
+  // Lazily fetch a camera frame for a face card, caching per camera so multiple
+  // cards sharing a camera don't each hit the backend. Leaves the initial
+  // placeholder in place when no frame is available.
+  async _loadFaceSnap(cameraEntity, img) {
+    if (!cameraEntity || !img || !this._hass) return;
+    this._faceSnaps = this._faceSnaps || {};
+    const cached = this._faceSnaps[cameraEntity];
+    const show = (dataUrl) => {
+      if (!dataUrl || !img.isConnected) return;
+      img.src = dataUrl;
+      img.style.display = "";
+      const ph = img.parentElement?.querySelector(".faces-thumb-ph");
+      if (ph) ph.style.display = "none";
+    };
+    if (cached === null) return;            // known-empty, don't refetch
+    if (typeof cached === "string") { show(cached); return; }
+    try {
+      const res = await this._hass.callWS({ type: "jarvis/camera_snapshot", entity_id: cameraEntity });
+      if (res?.image) {
+        const url = `data:image/jpeg;base64,${res.image}`;
+        this._faceSnaps[cameraEntity] = url;
+        show(url);
+      } else {
+        this._faceSnaps[cameraEntity] = null;
+      }
+    } catch (_) {
+      this._faceSnaps[cameraEntity] = null;  // leave the placeholder
+    }
+  }
+
+  _facesAge(secs) {
+    const s = Number(secs);
+    if (!isFinite(s) || s < 0 || s >= 1e8) return "";
+    if (s < 60) return `${Math.round(s)}s ago`;
+    if (s < 3600) return `${Math.round(s / 60)}m ago`;
+    return `${Math.round(s / 3600)}h ago`;
   }
 
   async _fetchMode() {
@@ -9868,6 +10069,28 @@ ${this._renderExcludedEntities(d)}
   .intr-snap-meta { font-size: 9px; color: var(--text-dim); font-family: var(--font-mono); margin-top: 4px; }
   .intr-fa { font-size: 10px; color: var(--amber); margin-top: 8px; }
   .intr-ack { font-size: 10px; color: var(--green); margin-top: 8px; }
+  /* Faces tab (#140) */
+  .faces-page { padding: 0 16px 24px; }
+  .faces-panel { margin-top: 12px; }
+  .faces-add-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 10px 0 4px; }
+  .faces-add-row #faces-add-name { flex: 1; min-width: 160px; }
+  .faces-section { margin-top: 16px; }
+  .faces-section-head { display: flex; align-items: baseline; gap: 10px; border-bottom: 1px solid var(--border, rgba(255,255,255,.1)); padding-bottom: 6px; margin-bottom: 12px; }
+  .faces-section-head > span:first-child { font-size: 13px; letter-spacing: .04em; color: var(--text, #cfe); }
+  .faces-section-sub { font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: var(--text-dim); font-family: var(--font-mono); }
+  .faces-gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 12px; }
+  .faces-card { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 4px; }
+  .faces-thumb { position: relative; width: 100%; aspect-ratio: 1 / 1; border-radius: 10px; overflow: hidden; background: var(--panel-2, rgba(255,255,255,.04)); border: 1px solid var(--border, rgba(255,255,255,.1)); display: flex; align-items: center; justify-content: center; }
+  .faces-thumb-img { width: 100%; height: 100%; object-fit: cover; }
+  .faces-thumb-ph { font-size: 32px; font-weight: 600; color: var(--text-dim); font-family: var(--font-mono); }
+  .faces-card-name { font-size: 13px; color: var(--text, #cfe); margin-top: 4px; word-break: break-word; }
+  .faces-card-meta { font-size: 10px; color: var(--text-dim); font-family: var(--font-mono); }
+  .faces-card-act { margin-top: 4px; }
+  .faces-mark { font-size: 10px; padding: 3px 8px; }
+  .faces-badge { position: absolute; top: 6px; left: 6px; font-size: 8px; letter-spacing: .06em; padding: 1px 5px; border-radius: 7px; font-family: var(--font-mono); }
+  .faces-badge.resident { background: rgba(80,200,120,.85); color: #04210f; }
+  .faces-badge.unknown { background: rgba(230,180,60,.85); color: #241a02; }
+  .faces-src { font-size: 10px; color: var(--text-dim); margin-top: 16px; font-family: var(--font-mono); }
   .intr-timeout-row { display: flex; justify-content: space-between; align-items: center; margin-top: 10px; }
   .intr-timeout-row label { font-size: 11px; color: var(--text-dim); }
   .intr-timeout { background: rgba(0,0,0,0.25); border: 1px solid var(--line); border-radius: 5px; color: var(--text); font-size: 11px; padding: 5px 9px; }

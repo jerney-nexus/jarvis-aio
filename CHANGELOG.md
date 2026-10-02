@@ -1,3 +1,16 @@
+## [8.27.0] — Household Faces: resident whitelist + face-aware intrusion (#140)
+
+A dedicated **Faces** tab and a JARVIS-native resident whitelist, built on top of the face recognition your vision backend already provides. JARVIS does **not** run its own face engine or enrollment — it reads recognized names from the backend (Frigate's native face recognition, or middleware like **Double Take** paired with external detectors such as **CompreFace** or **DeepStack**) and layers a "who lives here" flag on top. Requested by QuentinVape40 in #140.
+
+- **`face_roster.py`** (new) — the resident whitelist: a small, stdlib-only, JSON-persisted (`<config>/jarvis/face_roster.json`), thread-safe list matched by the same normalized-name key `identity.normalize` uses, so "Sam", "sam" and "  Sam  " are one resident. Atomic writes, never raises, tolerates a legacy `{normalized: display}` file.
+- **`recognition.recent_faces()`** — merges the live MQTT/Double Take recognition cache with Frigate's `last_recognized_face` sensors into one newest-first list (name, confidence, age, camera), de-duped per person/camera, each row marked known/unknown and whether the name is a flagged resident. Feeds the panel.
+- **`recognition.resident_present()`** — returns a flagged resident recognized confidently and recently on any camera, else `None`. A **no-op when the whitelist is empty**, so default behavior is unchanged.
+- **Face-aware intrusion (opt-in by curating the whitelist)** — when a flagged resident is the face on camera, JARVIS stands intrusion monitoring down: it won't raise the initial alert, and a resident appearing mid-investigation ends it. Non-residents and unknown faces alert exactly as before. Gated entirely on the whitelist, so homes that never flag a resident see no change.
+- **`jarvis/faces` websocket** — lists recent faces + residents and adds/removes residents (roster file I/O on the executor; the recognition read on the loop). Also reports the active `recognition_source`.
+- **Faces tab** (its own top-level panel) — a snapshot gallery where each subject shows the camera frame that recognized them with their **name under it** and a resident/unknown badge. **Household** residents are sectioned off from everyone else (**Recently Seen**), with one-click *mark resident* / *remove*, an add-by-name box, and a hint naming the supported backends. Snapshots are pulled per-camera through JARVIS's existing camera backend (Nest event media / Frigate / proxy) and fall back to an initial avatar when no frame is available.
+
+This is Phase 1 of #140: viewing recognized/unknown faces, building the whitelist, and wiring it into intrusion. Enrollment stays with your existing backend. 19 new tests (roster, `recent_faces`/`resident_present`, intrusion stand-down) + a panel smoke-test regression. Full suite green (2336 passed); audit clean.
+
 ## [8.26.1] — fix: register the conversation agent earlier at startup
 
 Reduces the transient ESP32 voice errors *"intent recognition engine conversation.jarvis is not found"* seen at boot/reconnect.

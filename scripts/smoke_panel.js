@@ -71,6 +71,7 @@ let _energyAgency = "advisory";
 let _bioEnabled = false;
 let _intrCalledOff = false;
 let _intrAck = false;
+const _residents = ["Sam"];
 const _intrSnap = { url: "/local/jarvis/intrusion/intrusion_dining_room_1730000000.jpg", camera: "camera.dining_room", ts: 1730000000, path: "/config/www/jarvis/intrusion/x.jpg" };
 const hass = {
   config: { location_name: "Springfield IL", latitude: 39.78, longitude: -89.65 },
@@ -217,6 +218,19 @@ const hass = {
       { ts: "09:00:02", cat: "AGENT", msg: "executed light.turn_on for porch" },
       { ts: "09:01:15", cat: "ERROR", msg: "camera.front unavailable" },
     ] };
+    if (m.type === "jarvis/faces") {
+      if (m.action === "add_resident" && m.name && !_residents.includes(m.name)) _residents.push(m.name);
+      if (m.action === "remove_resident" && m.name) { const i = _residents.indexOf(m.name); if (i >= 0) _residents.splice(i, 1); }
+      return {
+        residents: _residents.slice(),
+        recent: [
+          { name: "Sam", camera_entity: "camera.front", camera: "front_door", confidence: 94.0, age_seconds: 20, is_unknown: false, is_resident: _residents.includes("Sam"), source: "recent_cache" },
+          { name: "Quentin", camera_entity: "camera.front", camera: "front_door", confidence: 88.0, age_seconds: 90, is_unknown: false, is_resident: _residents.includes("Quentin"), source: "recent_cache" },
+          { name: "Unknown", camera_entity: "camera.back", camera: "backyard", confidence: 0.0, age_seconds: 300, is_unknown: true, is_resident: false, source: "frigate_sensor" },
+        ],
+        recognition_source: "frigate",
+      };
+    }
     return {};
   },
   connection: {
@@ -951,6 +965,37 @@ setTimeout(async () => {
     ["excluded-entities card maps to the Learning section",
       !!_exclCard && _exclCard.dataset.section === "learning"],
   );
+
+  // #140: dedicated Faces tab — snapshot gallery with names, household sectioned off.
+  checks.push(["Faces tab button present", /data-tab="faces"/.test(el._html())]);
+  el._currentTab = "faces";
+  el._render();
+  await el._fetchFaces();
+  await new Promise(r => setTimeout(r, 25));  // let lazy snapshot loads settle
+  const _facesBody = el.shadowRoot.getElementById("faces-body")?.innerHTML || "";
+  const _facesSections = [...el.shadowRoot.querySelectorAll(".faces-section-head > span:first-child")]
+    .map(s => s.textContent.trim());
+  const _samCard = [...el.shadowRoot.querySelectorAll(".faces-card")]
+    .find(c => (c.querySelector(".faces-card-name")?.textContent || "").trim() === "Sam");
+  const _samImg = _samCard?.querySelector("img[data-faces-cam]");
+  checks.push(
+    ["faces tab has add-resident input + button",
+      !!el.shadowRoot.querySelector("#faces-add-name") && !!el.shadowRoot.querySelector("#faces-add-btn")],
+    ["faces tab sections Household off from Recently Seen",
+      _facesSections.includes("Household") && _facesSections.includes("Recently Seen")],
+    ["faces tab renders a resident card with the name under the snapshot",
+      !!_samCard && !!_samCard.querySelector(".faces-thumb")],
+    ["resident card badges the resident", /faces-badge resident/.test(_samCard?.innerHTML || "")],
+    ["resident card requests a camera snapshot", !!_samImg],
+    ["snapshot loads into the card image",
+      !!_samImg && /^data:image\/jpeg;base64,/.test(_samImg.getAttribute("src") || "")],
+    ["recently-seen section badges an unknown face", /faces-badge unknown/.test(_facesBody)],
+    ["recently-seen offers to flag a known non-resident (Quentin)",
+      /data-faces-add="Quentin"/.test(_facesBody)],
+    ["faces tab shows the recognition source hint", /Reading identities from/.test(_facesBody)],
+  );
+  el._currentTab = "settings";
+  el._render();
 
   // v8.0.0: the safety-sensitive garage/cover confirmation suggestions are
   // opt-in — the toggle exists, defaults OFF, and asks for confirmation to enable.

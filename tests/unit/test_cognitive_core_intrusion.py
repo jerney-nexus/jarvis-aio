@@ -186,3 +186,70 @@ def test_notification_image_data_makes_local_absolute(cognitive_core, fake_hass)
 def test_notification_image_data_none_is_empty(cognitive_core, fake_hass):
     assert cognitive_core._notification_image_data(fake_hass, None) == {}
     assert cognitive_core._notification_image_data(fake_hass, "") == {}
+
+
+# ── resident face whitelist stands intrusion down (#140) ─────────────────────
+
+@pytest.fixture
+def faces(load, tmp_path, monkeypatch):
+    """Isolated recognition cache + empty household roster, plus a helper to seed
+    a confident, recent recognition on a camera."""
+    from datetime import datetime, timedelta, timezone
+
+    fr = load("face_roster")
+    monkeypatch.setattr(fr, "ROSTER_PATH", str(tmp_path / "face_roster.json"))
+    fr._loaded = False
+    fr._roster = {}
+
+    recog = load("recognition")
+    recog._RECOGNITION_CACHE.clear()
+
+    def seen(name, camera_entity="camera.front_door", confidence=92.0, age=10):
+        ts = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(seconds=age)
+        recog._RECOGNITION_CACHE[camera_entity] = {
+            "name": name, "confidence": confidence, "ts": ts, "unknown_count": 0}
+
+    yield type("Faces", (), {"roster": fr, "recog": recog, "seen": staticmethod(seen)})
+    recog._RECOGNITION_CACHE.clear()
+
+
+async def test_recognized_resident_suppresses_initial_alert(safety, fake_hass, faces):
+    # Away + corroborated motion would normally fire one investigating alert…
+    faces.roster.add_resident("Sam")
+    faces.seen("Sam")
+    fake_hass.states.set("person.sam", "not_home")
+    fake_hass.states.set("binary_sensor.front_door", "on", device_class="door")
+    _motion(fake_hass)
+    actions = await _tick(safety, fake_hass, anyone_home=False)
+    # …but the face on camera is a flagged resident, so JARVIS stands down.
+    assert _intrusions(actions) == []
+    assert safety._investigation is None
+
+
+async def test_unlisted_face_still_alerts(safety, fake_hass, faces):
+    # Same scenario, but the recognized person is NOT a resident → alert as usual,
+    # proving the stand-down is gated on the whitelist, not on any recognition.
+    faces.roster.add_resident("Sam")
+    faces.seen("Quentin")
+    fake_hass.states.set("person.sam", "not_home")
+    fake_hass.states.set("binary_sensor.front_door", "on", device_class="door")
+    _motion(fake_hass)
+    actions = await _tick(safety, fake_hass, anyone_home=False)
+    assert len(_intrusions(actions)) == 1
+
+
+async def test_resident_appearing_mid_investigation_stands_down(safety, fake_hass, faces):
+    # First tick opens an investigation (one alert) with no face recognized yet.
+    faces.roster.add_resident("Sam")
+    fake_hass.states.set("person.sam", "not_home")
+    fake_hass.states.set("binary_sensor.front_door", "on", device_class="door")
+    _motion(fake_hass)
+    first = await _tick(safety, fake_hass, anyone_home=False)
+    assert len(_intrusions(first)) == 1
+    assert safety._investigation is not None
+
+    # Now a resident is recognized on camera → the active investigation stands down.
+    faces.seen("Sam")
+    second = await _tick(safety, fake_hass, anyone_home=False)
+    assert _intrusions(second) == []
+    assert safety._investigation is None
