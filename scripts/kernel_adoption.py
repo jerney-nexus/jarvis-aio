@@ -54,6 +54,7 @@ _DECLARED: dict[str, dict] = {
     "router":       {"stage": "pure",    "owners": []},
     "causal":       {"stage": "pure",    "owners": []},
     "priority":     {"stage": "pure",    "owners": []},
+    "loop_detect":  {"stage": "pure",    "owners": []},
 }
 
 _STAGE_ICON = {"pure": "·", "shadow": "◐", "parity": "◑", "enforce": "●"}

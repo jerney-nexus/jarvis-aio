@@ -21,7 +21,18 @@ from .event import (
     from_state_changed,
     from_voice_turn,
 )
-from . import attention, authority, beliefs, causal, plan, priority, router, situation
+from . import (
+    attention,
+    authority,
+    beliefs,
+    causal,
+    loop_detect,
+    plan,
+    priority,
+    router,
+    situation,
+)
+from .loop_detect import LoopDetector, LoopVerdict
 from .causal import CausalHypothesis, CausalModel
 from .attention import AttentionContext, AttentionDecision, AttentionRequest, arbitrate
 from .authority import (
@@ -85,4 +96,7 @@ __all__ = [
     "CausalModel",
     "CausalHypothesis",
     "priority",
+    "loop_detect",
+    "LoopDetector",
+    "LoopVerdict",
 ]
