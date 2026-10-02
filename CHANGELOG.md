@@ -1,3 +1,12 @@
+## [8.28.0] — JARVIS output language setting + fix the panel language picker (#148)
+
+Two language improvements from the discussion in #148 (televisorsaal-ai).
+
+- **"JARVIS speaks" setting (new).** Previously JARVIS's spoken/written output (briefings, camera analysis, sentinel notices) could only follow Home Assistant's global language. That breaks down when the HA install is pinned to one language for other reasons — a shared/family system, or a device-pairing quirk that forces the UI language — but you want JARVIS in another. **Settings → General** now has a **JARVIS speaks** dropdown (German, Russian, and 25+ languages, or *Auto* to follow Home Assistant). Resolution order: a per-request voice/satellite language still wins, then this setting, then Home Assistant's global language. Leaving it on *Auto* preserves the existing behavior exactly. English output installs are unaffected.
+- **Fixed the panel language picker being one change behind (#148).** Changing the dashboard's **Panel language** did nothing the first time, then applied the *previous* choice on each subsequent change. The language selector had two `change` handlers — one saved + re-fetched asynchronously, the other reloaded the translation immediately off the not-yet-updated config, so it always read the prior value. The picker now resolves the language from the live `<select>` value, so a pick takes effect at once. The existing "Language" label is now **Panel language** to distinguish it from **JARVIS speaks**.
+
+New feature → middle-digit bump **8.27.0 → 8.28.0**. 6 new language tests + panel smoke-test coverage for the new control and the off-by-one fix; full suite green; audit clean.
+
 ## [8.27.0] — Household Faces: resident whitelist + face-aware intrusion (#140)
 
 A dedicated **Faces** tab and a JARVIS-native resident whitelist, built on top of the face recognition your vision backend already provides. JARVIS does **not** run its own face engine or enrollment — it reads recognized names from the backend (Frigate's native face recognition, or middleware like **Double Take** paired with external detectors such as **CompreFace** or **DeepStack**) and layers a "who lives here" flag on top. Requested by QuentinVape40 in #140.

@@ -1832,8 +1832,16 @@ dotLabel.textContent = lightBtn.classList.contains("adl")
   // at /jarvis_panel_static/i18n/<lang>.json, keyed by the English string.
   _resolveUiLang() {
     try {
-      const ov = this._data && this._data() && this._data().config && this._data().config.ui_language;
-      if (ov && ov !== "auto") return String(ov);
+      // Prefer the live <select> value over the last-fetched config. On change,
+      // the generic cfg-field handler saves ui_language and re-fetches
+      // asynchronously; _loadUiStrings (fired by the select's own handler) used
+      // to read the not-yet-updated config and so always loaded the PREVIOUS
+      // language — the off-by-one the panel's language picker showed (#148). The
+      // select already holds the newly chosen value, so read it directly.
+      const sel = this.shadowRoot && this.shadowRoot.getElementById("ui-lang-select");
+      const val = (sel && sel.value)
+        || (this._data && this._data() && this._data().config && this._data().config.ui_language);
+      if (val && val !== "auto") return String(val);
     } catch (_) {}
     return (this._hass && this._hass.language) || "en";
   }
@@ -4365,9 +4373,14 @@ dotLabel.textContent = lightBtn.classList.contains("adl")
         </div>
         <div class="home-cfg" style="margin-bottom:10px;">
           <div class="cfg-row">
-            <label>Language</label>
+            <label>Panel language</label>
             <select id="ui-lang-select" class="cfg-field" data-cfg-key="ui_language">${this._optsLabeled([['auto','Auto (Home Assistant)'],['en','English'],['zh','中文（简体）'],['zh-hant','中文（繁體）'],['cs','Čeština'],['da','Dansk'],['de','Deutsch'],['es','Español'],['fr','Français'],['it','Italiano'],['nl','Nederlands'],['nb','Norsk bokmål'],['pl','Polski'],['pt','Português'],['pt-br','Português (Brasil)'],['ro','Română'],['ru','Русский'],['sk','Slovenčina'],['fi','Suomi'],['sv','Svenska'],['tr','Türkçe'],['uk','Українська']], d.config?.ui_language || 'auto')}</select>
           </div>
+          <div class="cfg-row">
+            <label>JARVIS speaks</label>
+            <select class="cfg-field" data-cfg-key="output_language">${this._optsLabeled([['','Auto (Home Assistant)'],['en','English'],['zh','中文 (Chinese)'],['cs','Čeština (Czech)'],['da','Dansk (Danish)'],['nl','Nederlands (Dutch)'],['fi','Suomi (Finnish)'],['fr','Français (French)'],['de','Deutsch (German)'],['el','Ελληνικά (Greek)'],['he','עברית (Hebrew)'],['hu','Magyar (Hungarian)'],['id','Indonesia (Indonesian)'],['it','Italiano (Italian)'],['ja','日本語 (Japanese)'],['ko','한국어 (Korean)'],['nb','Norsk (Norwegian)'],['pl','Polski (Polish)'],['pt','Português (Portuguese)'],['ro','Română (Romanian)'],['ru','Русский (Russian)'],['sk','Slovenčina (Slovak)'],['es','Español (Spanish)'],['sv','Svenska (Swedish)'],['th','ไทย (Thai)'],['tr','Türkçe (Turkish)'],['uk','Українська (Ukrainian)'],['vi','Tiếng Việt (Vietnamese)']], d.config?.output_language || '')}</select>
+          </div>
+          <div class="mem-sub" style="margin-top:2px;">“Panel language” translates this dashboard. “JARVIS speaks” is the language of JARVIS's own briefings, camera analysis and announcements — set it when your Home Assistant runs in English but you want JARVIS in another language. Auto follows Home Assistant. A spoken request in another language is still answered in that language.</div>
         </div>
         <div class="toggle-list">
           <div class="toggle-row">

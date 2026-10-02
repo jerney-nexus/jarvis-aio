@@ -997,6 +997,25 @@ setTimeout(async () => {
   el._currentTab = "settings";
   el._render();
 
+  // #148: JARVIS output-language control + the language-picker off-by-one fix.
+  const _outLangSel = el.shadowRoot.querySelector('select.cfg-field[data-cfg-key="output_language"]');
+  const _uiLangSel = el.shadowRoot.getElementById("ui-lang-select");
+  // Off-by-one fix: _resolveUiLang must read the LIVE select, not stale config,
+  // so a just-picked language takes effect immediately (not one change late).
+  let _resolvedFromLiveSelect = false;
+  if (_uiLangSel) {
+    _uiLangSel.value = "de";
+    _resolvedFromLiveSelect = (el._resolveUiLang() === "de");
+  }
+  checks.push(
+    ["output-language select renders in General", !!_outLangSel],
+    ["output-language offers German + Russian",
+      !!_outLangSel && /value="de"/.test(_outLangSel.innerHTML) && /value="ru"/.test(_outLangSel.innerHTML)],
+    ["output-language has an Auto (follow HA) option",
+      !!_outLangSel && /<option value=""/.test(_outLangSel.innerHTML)],
+    ["language picker resolves from the live select (off-by-one fix)", _resolvedFromLiveSelect],
+  );
+
   // v8.0.0: the safety-sensitive garage/cover confirmation suggestions are
   // opt-in — the toggle exists, defaults OFF, and asks for confirmation to enable.
   const _garageBtn = el.shadowRoot.querySelector('[data-cfg-key="suggest_garage_confirmation"]');
