@@ -18,9 +18,9 @@ JARVIS stays shippable throughout.
 | 4 — Authority / capability engine | 🚧 In progress | 8.9.0 |
 | 5 — Planner → Executor → Verifier | 🚧 In progress | 8.10.0 |
 | 6 — Beliefs · Attention · Model Router | 🚧 In progress | 8.11.0 |
-| 7 — Causal learning | ⬜ Not started | 8.12.0 |
+| 7 — Causal learning | 🚧 In progress | 8.12.0 |
 
-_Kept current as each phase merges._
+_Kept current as each phase merges._ **All phase primitives (0–7) are now shipped additively** (shadow / parity / opt-in); 🚧 marks phases whose remaining work is wiring the existing consumers to enforce the new primitive (tracked in each phase's section).
 
 The audit's own conclusion is the premise here: the gap is **consolidation, not
 features**. Most of the "missing" pieces already exist as strong but parallel
@@ -160,7 +160,7 @@ Risk: medium. Guard: attention parity vs. current gate decisions.
 
 ## Phase 7 — Causal learning
 
-Target release: **8.12.0**
+Target release: **8.12.0** — **🚧 In progress** (pure `kernel/causal.py` ΔP-based causal model shipped in 8.12.0; `pattern_analyzer`/`rca`/`feedback` adoption to follow).
 
 - Extend `pattern_analyzer` + `rca` + `feedback` toward
   observation → hypothesis → action → outcome → causal confidence.

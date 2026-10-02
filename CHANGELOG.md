@@ -1,3 +1,14 @@
+## [8.12.0] — kernel Phase 7: causal learning (final phase)
+
+Phase 7 of the kernel plan (docs/KERNEL_PLAN.md) — the last one. Gives `pattern_analyzer` / `rca` / `feedback` a shared, principled measure of *whether a cause actually drives an effect*, closing the loop observation → hypothesis → action → outcome → **causal confidence**. **Additive and pure**: ships now; the learning modules adopt it later, so there is no behaviour change.
+
+- **`kernel/causal.py`** — each `CausalHypothesis` "C → E" accumulates a 2×2 contingency (cause present/absent × effect present/absent) and scores causal strength with **ΔP**, the causal contrast `P(E|C) − P(E|¬C)` — which, unlike raw co-occurrence, discounts an effect that happens just as often without the cause (so `prevents` reads negative, no-relationship reads ~0). Confidence shrinks ΔP toward 0 on small samples (≈5 balanced trials → half strength) and is 0 until the cause has been seen both present and absent. `CausalModel` tallies hypotheses and `ranked()` surfaces the strongest.
+- Pure (no HA import, no I/O; immutable hypotheses), so it's deterministic and testable, and seedable from the existing learning signals.
+
+New unit tests (8): perfect/absent/preventive causes, small-sample shrinkage, undefined-until-both-sides, contingency accumulation, and ranking. Audit clean (126 modules); full suite green.
+
+**This completes the staged kernel migration (Phases 0–7).** Each phase shipped its primitive additively (shadow / parity / opt-in); wiring the remaining consumers to enforce is tracked per-phase in the plan.
+
 ## [8.11.0] — kernel Phase 6: beliefs · attention · model router
 
 Phase 6 of the kernel plan (docs/KERNEL_PLAN.md): three pure primitives that formalise judgement JARVIS makes ad hoc today. **Additive**: nothing is routed through them yet, so there is no behaviour or settings change.

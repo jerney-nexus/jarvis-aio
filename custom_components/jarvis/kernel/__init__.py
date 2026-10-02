@@ -21,7 +21,8 @@ from .event import (
     from_state_changed,
     from_voice_turn,
 )
-from . import attention, authority, beliefs, plan, router, situation
+from . import attention, authority, beliefs, causal, plan, router, situation
+from .causal import CausalHypothesis, CausalModel
 from .attention import AttentionContext, AttentionDecision, AttentionRequest, arbitrate
 from .authority import (
     AuthorityDecision,
@@ -78,4 +79,7 @@ __all__ = [
     "Provider",
     "TaskRequirements",
     "RouteResult",
+    "causal",
+    "CausalModel",
+    "CausalHypothesis",
 ]
