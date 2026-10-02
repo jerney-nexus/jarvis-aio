@@ -1,3 +1,13 @@
+## [8.14.0] — kernel hardening H2: adoption matrix + JARVIS Constitution + emergency hierarchy
+
+Second post-migration hardening item (docs/KERNEL_PLAN.md → "Post-migration hardening"). **No behaviour change** — all additive: new docs, a pure primitive, and a CI guard.
+
+- **Emergency / priority hierarchy** — `kernel/priority.py`: one explicit precedence ladder (**life safety → security → property → household → convenience → personality**) as a pure comparison, so attention/authority/planner resolve competing concerns the same way instead of ad-hoc `if urgent` checks. The audit's core invariant — **personality must never override a safety concern** — is encoded in `may_override()`.
+- **JARVIS Constitution** — `docs/JARVIS_CONSTITUTION.md`: the short, stable set of inviolable invariants (precedence ladder; authority is log-only and enforcement is owner-gated; capabilities expire/revoke; fail-safe defaults; additive change discipline). Every line is load-bearing.
+- **Kernel-adoption / bypass matrix** — `KERNEL_ADOPTION.md` + `scripts/kernel_adoption.py`: a living matrix that scans live code for kernel references (by module name, dotted use, or symbol imported `from .kernel`) and compares against each primitive's declared stage (**pure → shadow → parity → enforce**). `--check` runs in CI and **fails on drift** — a primitive claimed adopted that nothing live consults. The first run corrected the record: `world_model` and `persistence` have no live callers yet (pure), not shadow as previously assumed.
+
+New unit tests (8, priority hierarchy). Audit clean; adoption check green; full suite green. No primitive is at `enforce` — that stays owner-gated once parity holds on real traffic.
+
 ## [8.13.0] — kernel hardening H1: authority enforcement (log-only) + token expiry/revocation
 
 First of the post-migration hardening items from the architecture-audit review (docs/KERNEL_PLAN.md → "Post-migration hardening"). **No behaviour change** — authority runs in **log-only parity mode**; nothing is blocked that wasn't already.
