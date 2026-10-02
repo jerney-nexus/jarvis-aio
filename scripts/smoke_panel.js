@@ -966,22 +966,36 @@ setTimeout(async () => {
       !!_exclCard && _exclCard.dataset.section === "learning"],
   );
 
-  // #140: Household Faces card — resident whitelist + recently recognized faces.
-  const _facesCard = _card("Household Faces");
+  // #140: dedicated Faces tab — snapshot gallery with names, household sectioned off.
+  checks.push(["Faces tab button present", /data-tab="faces"/.test(el._html())]);
+  el._currentTab = "faces";
+  el._render();
   await el._fetchFaces();
+  await new Promise(r => setTimeout(r, 25));  // let lazy snapshot loads settle
   const _facesBody = el.shadowRoot.getElementById("faces-body")?.innerHTML || "";
+  const _facesSections = [...el.shadowRoot.querySelectorAll(".faces-section-head > span:first-child")]
+    .map(s => s.textContent.trim());
+  const _samCard = [...el.shadowRoot.querySelectorAll(".faces-card")]
+    .find(c => (c.querySelector(".faces-card-name")?.textContent || "").trim() === "Sam");
+  const _samImg = _samCard?.querySelector("img[data-faces-cam]");
   checks.push(
-    ["household-faces card maps to the Learning section",
-      !!_facesCard && _facesCard.dataset.section === "learning"],
-    ["household-faces card has add-resident input + button",
+    ["faces tab has add-resident input + button",
       !!el.shadowRoot.querySelector("#faces-add-name") && !!el.shadowRoot.querySelector("#faces-add-btn")],
-    ["household-faces lists the current resident (Sam)", /faces-chip[\s\S]*Sam/.test(_facesBody)],
-    ["household-faces badges a recognized resident", /faces-badge resident/.test(_facesBody)],
-    ["household-faces badges an unknown face", /faces-badge unknown/.test(_facesBody)],
-    ["household-faces offers to flag a recognized non-resident",
+    ["faces tab sections Household off from Recently Seen",
+      _facesSections.includes("Household") && _facesSections.includes("Recently Seen")],
+    ["faces tab renders a resident card with the name under the snapshot",
+      !!_samCard && !!_samCard.querySelector(".faces-thumb")],
+    ["resident card badges the resident", /faces-badge resident/.test(_samCard?.innerHTML || "")],
+    ["resident card requests a camera snapshot", !!_samImg],
+    ["snapshot loads into the card image",
+      !!_samImg && /^data:image\/jpeg;base64,/.test(_samImg.getAttribute("src") || "")],
+    ["recently-seen section badges an unknown face", /faces-badge unknown/.test(_facesBody)],
+    ["recently-seen offers to flag a known non-resident (Quentin)",
       /data-faces-add="Quentin"/.test(_facesBody)],
-    ["household-faces shows the recognition source hint", /Reading identities from/.test(_facesBody)],
+    ["faces tab shows the recognition source hint", /Reading identities from/.test(_facesBody)],
   );
+  el._currentTab = "settings";
+  el._render();
 
   // v8.0.0: the safety-sensitive garage/cover confirmation suggestions are
   // opt-in — the toggle exists, defaults OFF, and asks for confirmation to enable.
