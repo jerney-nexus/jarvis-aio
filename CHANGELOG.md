@@ -1,3 +1,12 @@
+## [8.4.3] — reliability: importability under partial environments + no leaked log-writer thread
+
+Two correctness fixes surfaced while standing up real Home Assistant lifecycle tests (setup / reload / unload against an actual `hass`), plus the test harness itself. No settings or behaviour change.
+
+- **The camera platform imports `homeassistant.components.camera` lazily.** The module pulled it in at import time, which in turn imports TurboJPEG; on an install where that optional backend isn't present the whole integration failed to import (`IntegrationNotFound: jarvis`). The image fetch is now wrapped so the heavy import happens only when an image is actually requested — the integration loads cleanly whether or not the camera backend's extras are installed.
+- **The persistent-log writer thread is stopped on unload.** `websocket.py` lazily starts a daemon thread (`jarvis-log-writer`) the first time a log line is persisted, but nothing ever stopped it, so each reload leaked a fresh thread. Unload now shuts it down (stop sentinel + join, off the event loop); a later setup restarts it on demand.
+
+**New: real-HA lifecycle smoke tests + CI job.** `tests/integration/` exercises the integration under a genuine `hass` via `pytest-homeassistant-custom-component` — config flow, setup, reload, and clean unload (including a lingering-timer/thread cleanup check) — and a new `integration` CI job runs them on every push and PR. The unit suite is unchanged; the integration layer skips cleanly where PHACC isn't installed.
+
 ## [8.4.2] — fix: panel toggles on the Intrusion tab now respond to clicks
 
 **Fixes the new "Require confinement for intrusion monitoring" toggle (and the Frigate vision-confirm toggle beside it) doing nothing when clicked** (reported on #111). The panel wires its on/off toggles in a single pass that runs before the Intrusion tab is populated, so the two toggles in the Intrusion / Security card rendered but never got their click handler — clicking them appeared to do nothing and the setting never turned ON.

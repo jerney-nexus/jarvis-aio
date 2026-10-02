@@ -58,6 +58,30 @@ jobs:
       - name: Unit tests
         run: python -m pytest tests/ -q
 
+  integration:
+    name: Integration (real HA lifecycle)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Install integration-test dependencies
+        # PHACC provides the real `hass` fixture (and pulls in homeassistant +
+        # pytest-asyncio). home-assistant-frontend supplies the `hass_frontend`
+        # module that the frontend/panel_custom hard dependencies need during
+        # setup. The conversation backend (hassil/intents/gazetteer_matcher) is
+        # NOT needed: the smoke test mocks the platform forward.
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pytest-homeassistant-custom-component home-assistant-frontend
+      - name: Integration smoke tests
+        # Invoked via `python -m pytest` so the repo root is on sys.path (the
+        # conftest merges custom_components into PHACC's package __path__).
+        run: python -m pytest tests/integration/ -q
+
   frontend:
     name: Frontend (syntax + smoke)
     runs-on: ubuntu-latest
