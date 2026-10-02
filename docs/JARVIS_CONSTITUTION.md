@@ -76,5 +76,28 @@ deliberately, explicitly revised here first.
 
 ---
 
+## Executable
+
+These invariants are not just prose — the ones that can be mechanically checked are
+encoded as tests that *attempt the violation* and assert the responsible kernel
+primitive blocks it, in `tests/unit/test_constitution.py` (run in CI):
+
+| Invariant | Enforced by | Test asserts |
+| --- | --- | --- |
+| Personality never overrides safety (P1/P2) | `kernel.priority.may_override` | personality can't override a safety tier; no lower tier overrides a higher one |
+| No delegation escalation (A3) | `CapabilityToken.derive` | a derived token can't gain a capability its parent lacked; a child never outlives its parent |
+| Autonomy is revocable (A3) | `kernel.authority.authorize` | an **expired** or **revoked** token is denied |
+| Security requires authority (invariant S / A) | `kernel.authority.authorize` | a security capability is never silently allowed — DENY without identity, CONFIRM with |
+| Fail closed | `kernel.authority.authorize` | a policy that raises resolves to DENY |
+| Verify after act | `kernel.plan.execute_plan` | a step whose postcondition never holds is not DONE (VERIFY_FAILED) |
+| Idempotency required | `kernel.plan.execute_plan` | a completed idempotency key is skipped, never re-executed |
+| Correlation propagates | `kernel.correlation.scope` | a correlation id is carried through a scope and restored on exit |
+
+If one of those tests fails, an invariant has been broken — treat it as a release
+blocker. (Authority-is-log-only and enforcement-is-owner-gated are operational
+stances verified by the adoption/coverage matrices, not unit tests.)
+
+---
+
 *These invariants are intentionally few. Add one only when it is genuinely
 inviolable — the value of this document is that every line is load-bearing.*

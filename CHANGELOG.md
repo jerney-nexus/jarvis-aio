@@ -1,3 +1,20 @@
+## [8.23.0] — executable JARVIS Constitution (MCU audit A2)
+
+Second MCU-audit item (point 24: "turn the Constitution's invariants into tests"). **Additive** — tests + a doc section; no runtime change.
+
+Documentation drifts; tests don't. `tests/unit/test_constitution.py` now encodes the Constitution's mechanically-checkable invariants as tests that **attempt the violation** and assert the responsible kernel primitive blocks it:
+
+- **Personality never overrides safety** — `kernel.priority.may_override` refuses it, and no lower tier overrides a higher one.
+- **No delegation escalation** — `CapabilityToken.derive` can't grant a capability the parent lacked; a child never outlives its parent's expiry.
+- **Autonomy is revocable** — `authorize()` denies an expired or revoked token.
+- **Security requires authority** — a security capability is never silently allowed (DENY without identity, CONFIRM with).
+- **Fail closed** — a policy that raises resolves to DENY.
+- **Verify after act** — a step whose postcondition never holds is not DONE (VERIFY_FAILED).
+- **Idempotency required** — a completed idempotency key is skipped, never re-executed.
+- **Correlation propagates** — a correlation id is carried through a scope and restored on exit.
+
+11 tests; a failure means an invariant is broken (release blocker). `docs/JARVIS_CONSTITUTION.md` gains an "Executable" section mapping each invariant to its enforcing primitive and test. Full suite green.
+
 ## [8.22.0] — behavioral kernel-coverage matrix (MCU audit A1)
 
 First item from the second external architecture audit ("JARVIS needs to *become* the kernel, not just *have* one"). **Additive** — a new script, doc, and CI gate; no runtime change.
