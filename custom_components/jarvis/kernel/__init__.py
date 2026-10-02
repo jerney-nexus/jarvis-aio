@@ -21,7 +21,7 @@ from .event import (
     from_state_changed,
     from_voice_turn,
 )
-from . import authority, situation
+from . import authority, plan, situation
 from .authority import (
     AuthorityDecision,
     AuthorityRequest,
@@ -29,6 +29,7 @@ from .authority import (
     authorize,
 )
 from .event_bus import JarvisEventBus
+from .plan import Plan, PlanReport, Step, StepOutcome, execute_plan
 from .ledger import EventLedger
 from .situation import InvalidTransition, Situation, SituationManager
 from .world_model import WorldModel
@@ -55,4 +56,10 @@ __all__ = [
     "AuthorityRequest",
     "AuthorityDecision",
     "CapabilityToken",
+    "plan",
+    "Plan",
+    "Step",
+    "StepOutcome",
+    "PlanReport",
+    "execute_plan",
 ]

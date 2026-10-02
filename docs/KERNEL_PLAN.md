@@ -16,7 +16,7 @@ JARVIS stays shippable throughout.
 | 2 — World-model facade | ✅ Shipped | 8.7.0 |
 | 3 — Situation manager | ✅ Shipped | 8.8.0 (machine), 8.8.1 (intrusion shadow) |
 | 4 — Authority / capability engine | 🚧 In progress | 8.9.0 |
-| 5 — Planner → Executor → Verifier | ⬜ Not started | 8.10.0 |
+| 5 — Planner → Executor → Verifier | 🚧 In progress | 8.10.0 |
 | 6 — Beliefs · Attention · Model Router | ⬜ Not started | 8.11.0 |
 | 7 — Causal learning | ⬜ Not started | 8.12.0 |
 
@@ -136,7 +136,7 @@ parity log + the invariant tests.
 
 ## Phase 5 — Planner → Executor → Verifier
 
-Target release: **8.10.0**
+Target release: **8.10.0** — **🚧 In progress** (pure `kernel/plan.py` plan/step objects + executor/verifier with idempotency shipped in 8.10.0; `goals`/agent adoption to follow).
 
 - Formalize `goals.py` + agent execution into explicit plan objects with
   preconditions, postcondition verification, and `idempotency_key`.

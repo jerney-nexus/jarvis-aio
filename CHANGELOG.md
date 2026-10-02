@@ -1,3 +1,12 @@
+## [8.10.0] — kernel Phase 5: planner → executor → verifier
+
+Phase 5 of the kernel plan (docs/KERNEL_PLAN.md): formalises what `goals.py` + the agent do ad hoc into explicit plan objects with preconditions, **postcondition verification as a first-class step** (verify-after-act, not a bolt-on), and an `idempotency_key` so a retried or replayed plan never double-acts. **Additive and pure**: ships now; `goals`/agent adoption follows, so there is no behaviour change.
+
+- **`kernel/plan.py`** — `Plan` / `Step` objects and `execute_plan(plan, run_step=, check=, completed=)`. Per step it: skips any step whose `idempotency_key` is already completed; gates on **preconditions**; runs the action; then **verifies postconditions**, retrying the action once (mirroring the existing `_verify_control`). It stops at the first `BLOCKED` / `FAILED` / `VERIFY_FAILED` step and reports `ok=False`, and records each succeeded step's idempotency key so a re-run no-ops what already took hold.
+- Pure by construction — the side-effecting parts (perform a step, evaluate a condition against live state, know which keys ran) are **injected** callables, so the orchestration is deterministic and unit-testable; a raising condition check counts as unmet (safe). `PlanReport.to_dict()` is serialisable for the Phase 1 trail.
+
+New unit tests (9): happy path, precondition-blocks, action-failure, postcondition retry-then-succeed and never-holds, idempotency skip + key recording, raising-check safety, and report serialisation. Audit clean (122 modules); full suite green.
+
 ## [8.9.0] — kernel Phase 4: authority / capability engine (the safety keystone)
 
 Phase 4 of the kernel plan (docs/KERNEL_PLAN.md): one place that answers "may this capability be exercised, by this actor, in this context?" — the judgement today spread across `voice_confirm`, `output_gate` and the autonomy grants. **Additive and pure**: the engine ships now; no actuator is routed through it yet, so there is no behaviour or settings change. Per the plan's high-risk guard, it is built to run **log-only / allow-as-before** first (prove it reaches the same allow/deny as today on real traffic) before anything enforces it.
