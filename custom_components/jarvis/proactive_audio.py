@@ -54,7 +54,13 @@ DEFAULT_ANNOUNCE_PLAYER = ""            # optional fallback player when an area 
 MEDIA_DUCK_LEVEL = 0.10                 # spec background-duck floor — see _announce() note
 AUDIT_INTERVAL = timedelta(minutes=15)
 AUDIT_STARTUP_DELAY = timedelta(seconds=60)
-AUDIT_TARGET_AREA = "office"            # ← set to your office area_id
+# Where the infrastructure-health audit speaks. Override per-install via the
+# `infra_audit_area` config key (an area id/name/alias). Empty — the default —
+# means "no fixed area": the audit broadcasts house-wide so an infra alert is
+# never silently dropped (a hardcoded area that doesn't exist on the install
+# used to drop every audit alert with "unknown area").
+AUDIT_TARGET_AREA = ""
+CONF_INFRA_AUDIT_AREA = "infra_audit_area"
 
 # Predictive habit matrix: record occupancy each audit tick and surface likely
 # upcoming actions. Pre-emptive *execution* is OFF by default — JARVIS earns
@@ -75,6 +81,10 @@ SPEAK_SCHEMA = vol.Schema(
         vol.Optional("user_id"): cv.string,
         vol.Optional("expect_response", default=False): cv.boolean,
         vol.Optional("confirm_intent"): cv.string,
+        # Opt-in house-wide delivery: skip strict area resolution and announce via
+        # the broadcast set. Used by the infra audit when no fixed area is
+        # configured, so an alert is never dropped for a missing area.
+        vol.Optional("broadcast", default=False): cv.boolean,
     }
 )
 
@@ -178,6 +188,25 @@ def _known_area_labels(hass: HomeAssistant) -> list[str]:
         return sorted(a.name for a in ar.async_get(hass).async_list_areas() if a.name)
     except Exception:  # noqa: BLE001
         return []
+
+
+def _audit_speak_target(hass: HomeAssistant) -> dict:
+    """Decide where the infrastructure audit speaks.
+
+    If `infra_audit_area` is configured and resolves to a real area, speak there;
+    otherwise broadcast house-wide. An infra alert is important, so it is never
+    dropped just because no (or a non-existent) area was configured — the old
+    hardcoded "office" default silently discarded every alert on installs without
+    that area."""
+    try:
+        from . import jarvis_config
+        configured = (jarvis_config.get(CONF_INFRA_AUDIT_AREA, AUDIT_TARGET_AREA)
+                      or "").strip()
+    except Exception:  # noqa: BLE001
+        configured = AUDIT_TARGET_AREA
+    if configured and _resolve_area_id(hass, configured) is not None:
+        return {"target_area": configured}
+    return {"target_area": "", "broadcast": True}
 
 
 @callback
@@ -523,14 +552,20 @@ async def _dispatch_speak(hass: HomeAssistant, data: dict) -> None:
     user_id: str | None = data.get("user_id")
     expect_response: bool = data.get("expect_response", False)
     confirm_intent: str | None = data.get("confirm_intent")
+    broadcast: bool = data.get("broadcast", False)
 
-    area_id = _resolve_area_id(hass, target)
-    if area_id is None:
-        known = _known_area_labels(hass)
-        _LOGGER.warning(
-            "jarvis.speak: unknown area %r — ignoring (known areas: %s)",
-            target, ", ".join(known) if known else "none registered")
-        return
+    if broadcast:
+        # House-wide: an empty area id makes _resolve_targets fall through to the
+        # broadcast set, so the announcement is never dropped for a missing area.
+        area_id = ""
+    else:
+        area_id = _resolve_area_id(hass, target)
+        if area_id is None:
+            known = _known_area_labels(hass)
+            _LOGGER.warning(
+                "jarvis.speak: unknown area %r — ignoring (known areas: %s)",
+                target, ", ".join(known) if known else "none registered")
+            return
     if user_id:
         # Reserved for per-user biometric/profile filtering; threaded through
         # and logged until a profile store exists.
@@ -674,14 +709,13 @@ async def async_setup_proactive_audio(hass: HomeAssistant, entry: ConfigEntry) -
                 if matches:
                     message += _history_phrase(matches, honorific)
                 _LOGGER.info("Infrastructure audit: %s", message)
+                speak_data = _audit_speak_target(hass)
+                speak_data["message"] = message
+                speak_data["critical"] = verdict["critical"]
                 await hass.services.async_call(
                     DOMAIN,
                     SERVICE_SPEAK,
-                    {
-                        "message": message,
-                        "target_area": AUDIT_TARGET_AREA,
-                        "critical": verdict["critical"],
-                    },
+                    speak_data,
                     blocking=False,
                 )
                 # Persist this occurrence for future recall.
