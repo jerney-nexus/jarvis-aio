@@ -1,3 +1,15 @@
+## [8.29.0] — Faces: pinned recognition-time snapshots (#140 Phase 2)
+
+Phase 2 of the Faces tab. Previously each face card showed the *live* view from the camera that recognized the person — which is often empty by the time you look, since the person has moved on. Now JARVIS **pins the camera frame from the moment it recognized the face** and shows that, so a resident's card is the snapshot of them as they were last seen, not a stale empty hallway.
+
+- **`recognition.capture_face_snapshot()`** — on a confident, known recognition (Double Take match, Frigate `sub_label`, or Frigate `tracked_object_update`), JARVIS grabs a frame from that camera, downscales it, and pins it as `/config/www/jarvis/faces/<name>.jpg` (served at `/local/jarvis/faces/<name>.jpg`). One stable file per person — the latest sighting overwrites — and captures are throttled to at most once every 5 minutes per person. Entirely best-effort: a capture failure never affects recognition, and unknown/low-confidence faces are never pinned.
+- **`recent_faces()`** now carries a `snapshot_url` per row (the pinned frame, or `null`).
+- **Faces panel** — each card shows the pinned recognition-time snapshot when there is one, falls back to the live camera view until the next sighting, and to an initial-letter avatar when neither is available.
+
+Backend-agnostic: the frame is captured through JARVIS's existing camera path (Nest event media / Frigate / proxy), so it works for every recognition source. A pixel-tight face *crop* (vs. the full frame) is a possible later refinement — it needs per-backend bounding-box data that varies by Frigate version and isn't reliably present across Double Take / CompreFace / DeepStack.
+
+5 new recognition tests (capture gate/throttle, `snapshot_url` surfacing, the capture happy-path and unknown-skip) + panel smoke coverage (pinned snapshot shown directly; un-pinned face falls back to the live frame). New feature → **8.28.0 → 8.29.0**. Full suite green; audit clean.
+
 ## [8.28.0] — JARVIS output language setting + fix the panel language picker (#148)
 
 Two language improvements from the discussion in #148 (televisorsaal-ai).

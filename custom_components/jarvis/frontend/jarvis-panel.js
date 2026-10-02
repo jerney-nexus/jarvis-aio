@@ -7427,6 +7427,7 @@ ${this._renderExcludedEntities(d)}
           camera: seen?.camera,
           confidence: seen?.confidence,
           age_seconds: seen ? seen.age_seconds : null,
+          snapshot_url: seen?.snapshot_url,
           relation: "resident",
           actions: [{ label: "Remove", kind: "remove", name: n }],
         });
@@ -7447,6 +7448,7 @@ ${this._renderExcludedEntities(d)}
         camera: r.camera,
         confidence: r.confidence,
         age_seconds: r.age_seconds,
+        snapshot_url: r.snapshot_url,
         relation: r.is_unknown ? "unknown" : "known",
         actions: r.is_unknown ? [] : [{ label: "+ Resident", kind: "add", name: r.name }],
       })).join("") + `</div>`;
@@ -7456,7 +7458,7 @@ ${this._renderExcludedEntities(d)}
     html += `</div>`;
 
     if (f.recognition_source) {
-      html += `<div class="faces-src">Reading identities from: <b>${this._esc(String(f.recognition_source))}</b> · snapshots are the live view from the camera that recognized the face.</div>`;
+      html += `<div class="faces-src">Reading identities from: <b>${this._esc(String(f.recognition_source))}</b> · each snapshot is the frame captured when JARVIS recognized the face (falls back to the live camera view until the next sighting).</div>`;
     }
 
     body.innerHTML = html;
@@ -7470,14 +7472,18 @@ ${this._renderExcludedEntities(d)}
   }
 
   // One face card: snapshot (or an initial placeholder) with the name under it.
-  _faceCard({ name, camera_entity, camera, confidence, age_seconds, relation, actions }) {
+  _faceCard({ name, camera_entity, camera, confidence, age_seconds, relation, actions, snapshot_url }) {
     const safe = this._esc(name || "Unknown");
     const initial = this._esc((name || "?").trim().charAt(0).toUpperCase() || "?");
     const badge = relation === "resident" ? `<span class="faces-badge resident">RESIDENT</span>`
       : relation === "unknown" ? `<span class="faces-badge unknown">UNKNOWN</span>` : "";
-    const thumb = camera_entity
-      ? `<img class="faces-thumb-img" data-faces-cam="${this._esc(camera_entity)}" alt="${safe}" style="display:none"/><div class="faces-thumb-ph">${initial}</div>`
-      : `<div class="faces-thumb-ph">${initial}</div>`;
+    // Prefer the pinned recognition-time snapshot; else lazily pull a live frame
+    // from the camera that saw them; else an initial-letter avatar.
+    const thumb = snapshot_url
+      ? `<img class="faces-thumb-img" src="${this._esc(snapshot_url)}" alt="${safe}"/>`
+      : camera_entity
+        ? `<img class="faces-thumb-img" data-faces-cam="${this._esc(camera_entity)}" alt="${safe}" style="display:none"/><div class="faces-thumb-ph">${initial}</div>`
+        : `<div class="faces-thumb-ph">${initial}</div>`;
     const meta = [];
     if (camera) meta.push(this._esc(String(camera).replace(/_/g, " ")));
     if (relation !== "unknown" && confidence) meta.push(`${Math.round(confidence)}%`);

@@ -24,6 +24,8 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import time as _time
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -47,6 +49,18 @@ _RECOGNITION_CACHE: dict[str, dict] = {}
 _RECENT_EVENTS: dict[str, dict] = {}
 CACHE_MAX_AGE = timedelta(hours=2)
 CONFIDENCE_THRESHOLD = 60  # anything below this is considered uncertain
+
+# ── Pinned recognition-time face snapshots (#140 Phase 2) ───────────────────────
+# When a face is recognized confidently, JARVIS grabs the camera frame AT THAT
+# MOMENT and pins it, so the Faces panel shows the person as they were when seen
+# — not a live view that may now be empty. One stable file per normalized name
+# (latest recognition overwrites), served from /config/www → /local. Best-effort
+# throughout: a capture failure never affects recognition. Cache:
+#   {norm_name: {"url": "/local/...", "path": str, "ts": epoch, "camera_entity": str}}
+_FACE_SNAPSHOTS: dict[str, dict] = {}
+FACE_SNAPSHOT_URL_BASE = "/local/jarvis/faces"
+_FACE_SNAP_THROTTLE = 300.0   # re-pin a given person at most this often (secs)
+_MAX_FACE_SNAPSHOTS = 60      # prune beyond this many files
 
 
 def _normalize_score(raw) -> float:
@@ -184,6 +198,112 @@ def remember_recognition(camera_name: str, name: str, confidence: float) -> None
     }
 
 
+def _face_norm(name: str) -> str:
+    """Filesystem-safe key for a recognized name, used both as the snapshot
+    cache key and as the on-disk filename stem. Starts from identity.normalize
+    for consistency with the roster, then hard-restricts to ``[a-z0-9_-]`` and
+    caps length — the name arrives from an external backend over MQTT, so this
+    must never yield a path separator, ``..``, or anything that could escape the
+    snapshot directory. Returns ``""`` for a name with no usable characters."""
+    try:
+        from .identity import normalize
+        base = normalize(name)
+    except Exception:
+        base = "_".join((name or "").strip().lower().split())
+    import re
+    safe = re.sub(r"[^a-z0-9_-]", "", (base or "").lower())
+    return safe[:80]
+
+
+def face_snapshot_url(name: str) -> Optional[str]:
+    """The pinned recognition-time snapshot URL for ``name``, or None."""
+    rec = _FACE_SNAPSHOTS.get(_face_norm(name))
+    return rec.get("url") if rec else None
+
+
+def _store_face_snapshot(path: str, data: bytes) -> None:
+    """Write the pinned frame and prune old files. Runs on the executor."""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "wb") as f:
+        f.write(data)
+    try:
+        d = os.path.dirname(path)
+        files = [os.path.join(d, f) for f in os.listdir(d) if f.endswith(".jpg")]
+        files.sort(key=lambda p: os.path.getmtime(p), reverse=True)
+        for old in files[_MAX_FACE_SNAPSHOTS:]:
+            try:
+                os.remove(old)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
+def _should_capture_face(name: str) -> bool:
+    """Gate + throttle: capture a known (non-unknown) face at most every
+    _FACE_SNAP_THROTTLE seconds. Never raises."""
+    try:
+        key = _face_norm(name)
+        if not key or _is_unknown(name):
+            return False
+        rec = _FACE_SNAPSHOTS.get(key)
+        if rec and (_time.time() - rec.get("ts", 0)) < _FACE_SNAP_THROTTLE:
+            return False
+        return True
+    except Exception:
+        return False
+
+
+async def capture_face_snapshot(hass, camera: str, name: str) -> Optional[dict]:
+    """Pin the frame from ``camera`` as the recognition-time snapshot for
+    ``name``. One stable file per normalized name (latest wins). Best-effort:
+    returns the record or None, never raises. Gated/throttled by the caller via
+    :func:`_should_capture_face`; re-checked here so direct callers are safe."""
+    try:
+        if not camera or not _should_capture_face(name):
+            return None
+        from .paths import config_path_str
+        camera_entity = camera if str(camera).startswith("camera.") else f"camera.{camera}"
+        from homeassistant.components.camera import async_get_image as _get_image
+        image = await _get_image(hass, camera_entity, timeout=10)
+        content = getattr(image, "content", None)
+        if not content:
+            return None
+        try:
+            from .camera import _downscale_jpeg
+            content = _downscale_jpeg(content, 480)
+        except Exception:
+            pass
+        key = _face_norm(name)
+        snap_dir = config_path_str("www", "jarvis", "faces", hass=hass)
+        path = os.path.join(snap_dir, f"{key}.jpg")
+        await hass.async_add_executor_job(_store_face_snapshot, path, content)
+        rec = {
+            "url": f"{FACE_SNAPSHOT_URL_BASE}/{key}.jpg",
+            "path": path,
+            "ts": _time.time(),
+            "camera_entity": camera_entity,
+        }
+        _FACE_SNAPSHOTS[key] = rec
+        _LOGGER.info("JARVIS: pinned face snapshot for %s from %s", name, camera_entity)
+        return rec
+    except Exception as exc:
+        _LOGGER.debug("face snapshot capture failed for %s: %s", name, exc)
+        return None
+
+
+def _schedule_face_capture(hass, camera: str, name: str, confidence: float) -> None:
+    """From a recognition handler: schedule a recognition-time snapshot capture
+    for a confident, known face. Sync + best-effort so it's safe to call from the
+    MQTT callbacks; the actual grab runs as a background task."""
+    try:
+        if confidence < CONFIDENCE_THRESHOLD or not _should_capture_face(name):
+            return
+        hass.async_create_task(capture_face_snapshot(hass, camera, name))
+    except Exception:
+        pass
+
+
 def last_seen_at(hass: HomeAssistant, camera_entity: str) -> Optional[dict]:
     """Return most recent recognition on that camera, or None if stale."""
     rec = _RECOGNITION_CACHE.get(camera_entity)
@@ -235,6 +355,7 @@ def recent_faces(hass: HomeAssistant, limit: int = 20) -> list[dict]:
         if prior is not None and prior["age_seconds"] <= age_seconds:
             return  # keep the fresher sighting
         unknown = _is_unknown(name)
+        snap = None if unknown else _FACE_SNAPSHOTS.get(_face_norm(name))
         rows[key] = {
             "name": name,
             "camera_entity": cam_entity,
@@ -244,6 +365,9 @@ def recent_faces(hass: HomeAssistant, limit: int = 20) -> list[dict]:
             "is_unknown": unknown,
             "is_resident": bool(
                 face_roster and not unknown and face_roster.is_resident(name)),
+            # Pinned recognition-time snapshot (Phase 2) — the frame from when
+            # JARVIS last saw this person; None falls back to the live camera view.
+            "snapshot_url": snap.get("url") if snap else None,
             "source": source,
         }
 
@@ -373,6 +497,7 @@ async def register_recognition_listener(hass: HomeAssistant) -> list:
         confidence = float(match.get("confidence", 0))
 
         remember_recognition(camera, name, confidence)
+        _schedule_face_capture(hass, camera, name, confidence)
 
         # Fire a custom event that automations/blueprints can use
         hass.bus.async_fire(
@@ -475,6 +600,7 @@ async def register_recognition_listener(hass: HomeAssistant) -> list:
                     sub_name, sub_conf = _parse_sub_label(sub)
                     if sub_name:
                         remember_recognition(camera, sub_name, sub_conf)
+                        _schedule_face_capture(hass, camera, sub_name, sub_conf)
                         hass.bus.async_fire("jarvis_face_recognized", {
                             "camera": camera,
                             "camera_entity": camera_entity,
@@ -520,6 +646,7 @@ async def register_recognition_listener(hass: HomeAssistant) -> list:
                     is_unknown = name.lower() in ("unknown", "unknown person")
                     if camera:
                         remember_recognition(camera, name, conf)
+                        _schedule_face_capture(hass, camera, name, conf)
                     hass.bus.async_fire("jarvis_face_recognized", {
                         "camera": camera,
                         "camera_entity": f"camera.{camera}" if camera else "",
