@@ -1,3 +1,9 @@
+## [8.7.1] — fix: stop using the deprecated DeviceRegistry.devices mapping
+
+Home Assistant 2026.08 deprecated accessing `device_registry.devices` as a mapping (`.values()`, `.get()`, membership, subscription), with removal in **HA 2027.9**. `camera._nest_device_to_camera` iterated `dev_reg.devices.values()` to map a Nest device id to its camera entity, which would have broken on that release (flagged by the Home Assistant Breakage Radar).
+
+It now iterates the registry directly (`for device in dev_reg.devices`), the supported replacement that yields `DeviceEntry` on current cores, with a defensive fallback for older cores whose iteration yields ids — so behaviour is identical today and future-proof for 2027.9. Added focused tests covering both iteration styles and the no-match paths.
+
 ## [8.7.0] — kernel Phase 2: world-model read facade
 
 Phase 2 of the kernel plan (docs/KERNEL_PLAN.md): a single **read-only** view over the facts JARVIS already has, answered in canonical terms. **Additive and opt-in** — nothing is migrated onto it yet, so there is no behaviour or settings change; reasoning paths will adopt it one caller at a time in later work.
