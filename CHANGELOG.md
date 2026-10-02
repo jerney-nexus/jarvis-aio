@@ -1,3 +1,13 @@
+## [8.9.0] — kernel Phase 4: authority / capability engine (the safety keystone)
+
+Phase 4 of the kernel plan (docs/KERNEL_PLAN.md): one place that answers "may this capability be exercised, by this actor, in this context?" — the judgement today spread across `voice_confirm`, `output_gate` and the autonomy grants. **Additive and pure**: the engine ships now; no actuator is routed through it yet, so there is no behaviour or settings change. Per the plan's high-risk guard, it is built to run **log-only / allow-as-before** first (prove it reaches the same allow/deny as today on real traffic) before anything enforces it.
+
+- **`kernel/authority.py`** — `authorize(request)` resolves to **ALLOW / DENY / CONFIRM** from `(capability, identity, actor, token, context, situation, confidence, intent, scope)`. Capabilities are classified by sensitivity (safe / sensitive / security), with **unknown capabilities treated as sensitive** so an unrecognised actuation is never silently allowed.
+- **Capability tokens** — a delegated sub-agent (FRIDAY / HOMER) carries a `CapabilityToken`; a token-bearing actor is **denied** any capability its token doesn't grant, and `derive()` can only **narrow** a parent token (intersection), so delegation can never escalate.
+- **Security-sensitive capabilities require explicit authority** — they resolve to CONFIRM (or DENY without an identified requester), never a silent allow — and the engine **fails closed** (DENY) on any policy error.
+
+New unit tests (15) across sensitivity classification, the default policy, token non-escalation/derivation, and fail-closed behaviour. Audit clean (121 modules); full suite green.
+
 ## [8.8.1] — kernel Phase 3: intrusion adopts the situation machine (shadow)
 
 Completes Phase 3 by wiring `intrusion` as the first consumer of the `kernel.situation` machine (added in 8.8.0), running **in shadow mode** alongside the existing authoritative path. The intrusion lifecycle is mirrored into a durable situation so the generalised machine can be proven to track the same episodes before anything flips onto it. **No behaviour change** — the mirror is entirely best-effort and never affects intrusion handling.
