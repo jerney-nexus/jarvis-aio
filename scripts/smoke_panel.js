@@ -1016,6 +1016,24 @@ setTimeout(async () => {
     ["language picker resolves from the live select (off-by-one fix)", _resolvedFromLiveSelect],
   );
 
+  // #55: the chosen language is authoritative — it wins over the live select /
+  // stale config, and _loadUiStrings is awaitable so the sole handler can order
+  // load → save → re-render deterministically (no one-selection lag).
+  let _explicitWins = false, _loadIsThenable = false;
+  if (_uiLangSel) {
+    _uiLangSel.value = "ru";                        // live select says Russian…
+    el._uiLangLoaded = null;
+    try { el._loadUiStrings("de"); } catch (_) {}   // …but German was explicitly chosen
+    _explicitWins = (el._uiLangLoaded === "de");
+    el._uiLangLoaded = null;
+    const _pEn = el._loadUiStrings("en");           // the en path needs no network
+    _loadIsThenable = !!(_pEn && typeof _pEn.then === "function");
+  }
+  checks.push(
+    ["explicit language choice wins over the live select (#55)", _explicitWins],
+    ["_loadUiStrings returns a thenable so save/re-render can be ordered (#55)", _loadIsThenable],
+  );
+
   // v8.0.0: the safety-sensitive garage/cover confirmation suggestions are
   // opt-in — the toggle exists, defaults OFF, and asks for confirmation to enable.
   const _garageBtn = el.shadowRoot.querySelector('[data-cfg-key="suggest_garage_confirmation"]');
