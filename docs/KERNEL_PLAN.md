@@ -179,15 +179,46 @@ deployment; the usable, novel work is tracked here, each as its own release.
 | # | Hardening item | Status | Release |
 | --- | --- | --- | --- |
 | H1 | Authority: capability expiry/revocation + log-only parity tracker | ✅ Shipped | 8.13.0 |
-| H2 | Kernel-adoption / bypass matrix + JARVIS Constitution + emergency hierarchy | 🚧 In progress | 8.14.0 |
+| H2 | Kernel-adoption / bypass matrix + JARVIS Constitution + emergency hierarchy | ✅ Shipped | 8.14.0 |
 | H3 | Loop detection (action → event → action) | ✅ Shipped | 8.15.0 |
-| H4 | Execution journal + crash recovery | 🚧 In progress | 8.16.0 |
+| H4 | Execution journal + crash recovery | ✅ Shipped | 8.16.0 |
 
 Deferred as over-engineered for this deployment (not planned): a full 7-type
 memory-lifecycle taxonomy, a broad logical-persistence API, saga-style
 compensation beyond verify+idempotency, and a full event replay/simulation
 subsystem. Hard authority *enforcement* (flipping parity → deny) is a separate,
 owner-gated step once parity holds on real traffic.
+
+## MCU migration (second external audit follow-up)
+
+The second audit's thesis: *"JARVIS needs to become the kernel, not just have
+one."* Most kernel primitives exist but aren't yet authoritative (the honest
+`KERNEL_ADOPTION.md` / `KERNEL_COVERAGE.md` state). The net-new, right-sized items
+from that audit — each a feature release, each additive, authority still
+owner-gated:
+
+| # | MCU item | Status | Release |
+| --- | --- | --- | --- |
+| A1 | Behavioral coverage matrix (path × contract) + CI gate | 🚧 In progress | 8.22.0 |
+| A2 | Executable Constitution (invariant-violation tests) | ⬜ | 8.23.0 |
+| A3 | Agency Budget (rate / retry / delegation-depth caps) | ⬜ | 8.24.0 |
+| A4 | Richer authority **parity** inputs (situation/scope/intent/token) — still log-only | ⬜ | 8.25.0 |
+| A5 | Universal `ActuatorRequest` contract + route `control_device` through it (shadow/parity) | ⬜ | 8.26.0 |
+
+Held as north-star (not near-term, would destabilize a lived-in system):
+persistent agency / continuity-of-self, a graduated-autonomy state machine, a
+full IdentityAssertion subsystem, closing the full learning loop, and a single
+physical persistence store. Hard authority enforcement remains owner-gated.
+
+### A1 — Behavioral coverage matrix (8.22.0)
+
+- `scripts/kernel_coverage.py` + `KERNEL_COVERAGE.md`: measures what fraction of
+  behaviour-bearing paths (`control_device`, `bulk_control`, `execute_plan`,
+  `goals`, `intrusion`, `proactive`, `friday`, `homer`) actually pass through each
+  kernel contract (Event → WorldModel → Situation → Authority → Plan → Verify →
+  Outcome), as `none/shadow/parity/full`. Every non-`none` cell is verified
+  against evidence in the path's source, and `--check` is a CI gate. Honest
+  starting number: **4.2%** — the figure to move as paths migrate.
 
 ### H1 — Authority hardening (8.13.0)
 
