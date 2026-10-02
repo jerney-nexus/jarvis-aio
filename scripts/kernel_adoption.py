@@ -57,6 +57,8 @@ _DECLARED: dict[str, dict] = {
     "loop_detect":  {"stage": "pure",    "owners": []},
     "journal":      {"stage": "pure",    "owners": []},
     "budget":       {"stage": "pure",    "owners": []},
+    # control_device constructs an ActuatorRequest in shadow (logs it).
+    "actuator":     {"stage": "shadow",  "owners": ["agent"]},
 }
 
 _STAGE_ICON = {"pure": "·", "shadow": "◐", "parity": "◑", "enforce": "●"}

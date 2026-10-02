@@ -1,3 +1,15 @@
+## [8.26.0] — universal actuator contract (MCU audit A5)
+
+Final MCU-audit shortlist item (point 17: *"perhaps the most important implementation rule… every actuator should have one interface"*, + point 18's complete outcome model). **Additive, shadow** — `control_device` describes itself through the contract but execution is unchanged.
+
+- **`kernel/actuator.py`** — the one canonical request shape every actuator path should converge on: `ActuatorRequest` (`capability`, `target`, `params`, `actor`, `identity`, `intent`, `situation`, `authority`, `correlation_id`, `causation_id`, `idempotency_key`, `expected_outcome`) + a `build_actuator_request()` helper. Plus `ActuatorOutcome` with the lifecycle **`requested → executed → observed → verified`** (and `mismatch` / `failed`) — the audit's point that *"HA service returned success"* is not *"the world reached the expected state."* Pure: no HA import, no execution.
+- **`agent._exec_control_device`** now constructs an `ActuatorRequest` for each actuation (capability, target, intent, correlation id, idempotency key) and logs it in **shadow** — no behaviour change, no gating. The shape is exercised on real traffic before anything depends on it.
+- Registered in `kernel/__init__`; adoption matrix records `actuator` = **shadow** (owner `agent`). The coverage matrix is **deliberately unchanged at 4.2%** — shadow-logging the request object isn't a pipeline-contract pass-through, and the number stays honest until execution actually routes through the contract.
+
+6 new tests. Audit clean; adoption + coverage green; full suite green.
+
+**This completes the MCU-audit shortlist (A1–A5, 8.22.0–8.26.0):** behavioral coverage matrix, executable Constitution, agency budget, richer authority parity inputs, and the universal actuator contract. Authority remains log-only/owner-gated; the north-star items (persistent agency, graduated autonomy, full IdentityAssertion, closed learning loop) are intentionally not undertaken.
+
 ## [8.25.0] — richer authority parity inputs (MCU audit A4)
 
 Fourth MCU-audit item (point 3: the parity bridge was only feeding the engine capability/identity/confidence, not the full request). **Still log-only** — the parity bridge never changes the live gate's outcome.
