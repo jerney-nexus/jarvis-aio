@@ -297,3 +297,36 @@ def test_dismiss_intrusion_marks_wrong(load, monkeypatch):
         # from leaking into other intrusion tests (shared jc.intrusion module).
         intr.clear_calloff()
         intr._called_off_until = 0.0
+
+
+def test_correlation_id_explicit_is_stored(load):
+    dr = load("decision_record")
+    db = _tmp()
+    try:
+        rid = dr.record("anticipation", decision="x", correlation_id="corr-explicit", db_path=db)
+        rec = dr.get(rid, db_path=db)
+        assert rec["correlation_id"] == "corr-explicit"
+    finally:
+        try:
+            os.unlink(db)
+        except OSError:
+            pass
+
+
+def test_correlation_id_defaults_to_ambient_scope(load):
+    dr = load("decision_record")
+    corr = load("kernel.correlation")
+    db = _tmp()
+    try:
+        with corr.scope("chain-42"):
+            rid = dr.record("anticipation", decision="x", db_path=db)
+        rec = dr.get(rid, db_path=db)
+        assert rec["correlation_id"] == "chain-42"
+        # Outside any scope, it stays null.
+        rid2 = dr.record("anticipation", decision="y", db_path=db)
+        assert dr.get(rid2, db_path=db)["correlation_id"] is None
+    finally:
+        try:
+            os.unlink(db)
+        except OSError:
+            pass

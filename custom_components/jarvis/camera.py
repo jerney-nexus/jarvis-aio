@@ -1409,6 +1409,19 @@ async def async_analyze_camera(
         "JARVIS: %s → notable=%s cat=%s | %s",
         camera_name, judgment["notable"], judgment["category"], summary[:80],
     )
+    # Shadow mode (kernel Phase 1): record the completed scene analysis on the
+    # event bus. Best-effort; never affects the analysis result returned below.
+    try:
+        from .events import publish as _publish_event
+        from .kernel import from_camera_analysis
+        _cat = judgment.get("category")
+        _publish_event(hass, from_camera_analysis(
+            entity_id, summary or analysis,
+            objects=[_cat] if _cat else None,
+            importance=0.6 if judgment.get("notable") else 0.3,
+        ))
+    except Exception:
+        pass
     return {
         "success": True,
         "analysis": analysis,

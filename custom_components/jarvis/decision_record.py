@@ -55,12 +55,14 @@ CREATE TABLE IF NOT EXISTS decision_records (
     outcome        TEXT,
     outcome_ts     REAL,
     outcome_source TEXT,
-    ref            TEXT
+    ref            TEXT,
+    correlation_id TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_dr_ts      ON decision_records (ts);
 CREATE INDEX IF NOT EXISTS idx_dr_kind    ON decision_records (kind);
 CREATE INDEX IF NOT EXISTS idx_dr_outcome ON decision_records (outcome);
 CREATE INDEX IF NOT EXISTS idx_dr_ref     ON decision_records (ref);
+CREATE INDEX IF NOT EXISTS idx_dr_corr    ON decision_records (correlation_id);
 """
 
 
@@ -77,9 +79,24 @@ def _connect(db_path: str) -> sqlite3.Connection:
         cols = {r[1] for r in conn.execute("PRAGMA table_info(decision_records)").fetchall()}
         if "ref" not in cols:
             conn.execute("ALTER TABLE decision_records ADD COLUMN ref TEXT")
+        if "correlation_id" not in cols:
+            conn.execute("ALTER TABLE decision_records ADD COLUMN correlation_id TEXT")
     except Exception:
         pass
     return conn
+
+
+def _current_correlation() -> Optional[str]:
+    """The ambient correlation id (set by an event handler), or None.
+
+    Lazy, best-effort, and swallowed on any error so decision logging stays
+    dependency-light and never fails because of the kernel layer.
+    """
+    try:
+        from .kernel import correlation
+        return correlation.current()
+    except Exception:
+        return None
 
 
 def _js(v) -> str:
@@ -138,14 +155,22 @@ def record(
     confidence=None,
     ref: Optional[str] = None,
     ts: Optional[float] = None,
+    correlation_id: Optional[str] = None,
     db_path: Optional[str] = None,
 ) -> Optional[int]:
     """Insert one immutable decision record. Returns its id, or None on failure.
 
     Best-effort by design: a logging failure must never break the decision that is
     being logged, so all errors are swallowed and None is returned.
+
+    ``correlation_id`` links this decision into an event chain. When not given it
+    defaults to the ambient correlation id set by whatever event is being handled
+    (kernel.correlation), so chains link up without threading it through every
+    caller. Pass it explicitly to override.
     """
     db = _resolve(db_path)
+    if correlation_id is None:
+        correlation_id = _current_correlation()
     try:
         conn = _connect(db)
     except Exception:
@@ -154,8 +179,8 @@ def record(
         cur = conn.execute(
             "INSERT INTO decision_records "
             "(ts, kind, observation, interpretation, evidence, decision, reason, "
-            " model, tokens, latency_ms, confidence, ref) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " model, tokens, latency_ms, confidence, ref, correlation_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 float(ts) if ts is not None else time.time(),
                 str(kind),
@@ -169,6 +194,7 @@ def record(
                 _int_or_none(latency_ms),
                 _float_or_none(confidence),
                 str(ref) if ref is not None else None,
+                str(correlation_id) if correlation_id is not None else None,
             ),
         )
         conn.commit()

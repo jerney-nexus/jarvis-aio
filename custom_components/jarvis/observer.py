@@ -1050,7 +1050,27 @@ async def start(hass: HomeAssistant, config: dict) -> None:
         return
 
     _STATE.running = True
-    _STATE.unsub = hass.bus.async_listen("state_changed", _on_state_changed)
+
+    def _state_changed_handler(event: Event) -> None:
+        """Shadow-publish the event + run the real handler inside a correlation
+        scope (kernel Phase 1). Best-effort: the publish/scope can never break the
+        authoritative handler, and asyncio copies the correlation id into any
+        task the handler spawns, so downstream decisions link to this event."""
+        cid = getattr(getattr(event, "context", None), "id", None)
+        try:
+            from .events import publish as _publish_event
+            from .kernel import correlation, from_state_changed
+        except Exception:
+            _on_state_changed(event)
+            return
+        with correlation.scope(cid):
+            try:
+                _publish_event(_STATE.hass, from_state_changed(event))
+            except Exception:
+                pass
+            _on_state_changed(event)
+
+    _STATE.unsub = hass.bus.async_listen("state_changed", _state_changed_handler)
     _LOGGER.info(
         "JARVIS Observer v5.7.00 started (classifier=%s, reasoning=%s, bedrooms=%s)",
         config.get("classifier_model", "default"),

@@ -591,14 +591,31 @@ async def async_register_services(hass: HomeAssistant) -> None:
         area_id = _resolve_area_id(hass, target) or target
         router = _intent_router(hass)
 
-        # If a confirmation window is open, an affirmative completes the pending
-        # action; otherwise treat the phrase as a fresh local command.
-        handled = await router.handle_voice_response(phrase)
-        if handled.get("handled"):
-            _LOGGER.info("jarvis.process_intent: confirmed → %s", handled)
-            return
-        result = await router.route(phrase, area_id, user_id=user_id)
-        _LOGGER.info("jarvis.process_intent: %r → %s", phrase, result)
+        # Shadow mode (kernel Phase 1): publish the voice turn and open a
+        # correlation scope so any decision recorded while routing links to it.
+        # Entirely best-effort — intent handling is unaffected if it fails.
+        import contextlib
+        _scope = contextlib.nullcontext()
+        try:
+            import uuid
+            from .events import publish as _publish_event
+            from .kernel import correlation, from_voice_turn
+            _corr = uuid.uuid4().hex
+            _publish_event(hass, from_voice_turn(
+                phrase, speaker=user_id, location=area_id, correlation_id=_corr))
+            _scope = correlation.scope(_corr)
+        except Exception:
+            _scope = contextlib.nullcontext()
+
+        with _scope:
+            # If a confirmation window is open, an affirmative completes the pending
+            # action; otherwise treat the phrase as a fresh local command.
+            handled = await router.handle_voice_response(phrase)
+            if handled.get("handled"):
+                _LOGGER.info("jarvis.process_intent: confirmed → %s", handled)
+                return
+            result = await router.route(phrase, area_id, user_id=user_id)
+            _LOGGER.info("jarvis.process_intent: %r → %s", phrase, result)
 
     hass.services.async_register(DOMAIN, SERVICE_SPEAK, _handle_speak, schema=SPEAK_SCHEMA)
     hass.services.async_register(

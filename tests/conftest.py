@@ -171,15 +171,31 @@ def _load(modname: str):
     relative imports (`from .websocket import …`, `from . import reasoning_cache`)
     resolve to our `jc.*` stubs and to single shared instances.
 
-    Note: we deliberately do NOT pass submodule_search_locations. Doing so would
-    make each module a *package* whose relative imports resolve under its own
-    name (jc.reasoning_loop.reasoning_cache), creating duplicate module copies
-    that defeat monkeypatching. As plain modules their __package__ is "jc", so
-    `from . import X` resolves to jc.X via the jc package __path__."""
-    key = f"jc.{modname}"
+    Flat modules (`load("scheduler")`) are loaded as plain `jc.<name>` modules
+    whose __package__ is "jc", so `from . import X` resolves to jc.X via the jc
+    package __path__ — we deliberately do NOT pass submodule_search_locations for
+    them, which would create duplicate copies that defeat monkeypatching.
+
+    Subpackage modules (`load("kernel.ledger")`, or the "/"-spelled
+    `load("kernel/ledger")`) are supported too: the intermediate package
+    (`jc.kernel`) is registered with a real __path__ so the leaf's own relative
+    imports (`from . import persistence`, `from ..sqlite_utils import …`) resolve
+    against the component tree. This is what the kernel subpackage needs."""
+    dotted = modname.replace("/", ".")
+    key = f"jc.{dotted}"
     if key in sys.modules:
         return sys.modules[key]
-    spec = importlib.util.spec_from_file_location(key, COMP / f"{modname}.py")
+    parts = dotted.split(".")
+    # Register any intermediate subpackages (e.g. jc.kernel) with a real __path__
+    # so the leaf module's relative imports resolve.
+    for depth in range(1, len(parts)):
+        pkgname = "jc." + ".".join(parts[:depth])
+        if pkgname not in sys.modules:
+            pkg = types.ModuleType(pkgname)
+            pkg.__path__ = [str(COMP.joinpath(*parts[:depth]))]
+            sys.modules[pkgname] = pkg
+    leaf_path = COMP.joinpath(*parts).with_suffix(".py")
+    spec = importlib.util.spec_from_file_location(key, leaf_path)
     mod = importlib.util.module_from_spec(spec)
     sys.modules[key] = mod
     spec.loader.exec_module(mod)
