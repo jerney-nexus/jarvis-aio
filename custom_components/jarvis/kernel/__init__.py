@@ -11,7 +11,7 @@ Phase 0 contents:
 """
 from __future__ import annotations
 
-from . import persistence
+from . import correlation, persistence
 from .event import (
     EVENT_CAMERA_ANALYSIS,
     EVENT_STATE_CHANGED,
@@ -21,6 +21,8 @@ from .event import (
     from_state_changed,
     from_voice_turn,
 )
+from .event_bus import JarvisEventBus
+from .ledger import EventLedger
 
 __all__ = [
     "JarvisEvent",
@@ -31,4 +33,7 @@ __all__ = [
     "from_camera_analysis",
     "from_voice_turn",
     "persistence",
+    "correlation",
+    "JarvisEventBus",
+    "EventLedger",
 ]

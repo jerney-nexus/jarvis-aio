@@ -218,6 +218,24 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     sched = JarvisScheduler(hass)
     resources = JarvisResources()
 
+    # ── Kernel event bus (Phase 1, SHADOW MODE) ──────────────────────────────
+    # The observer, camera and voice paths publish JarvisEvents to this bus
+    # alongside their existing logic; the ledger records them to its own SQLite
+    # file for a queryable, correlated trail (docs/KERNEL_PLAN.md). Nothing
+    # consumes events to drive behaviour yet. Entirely best-effort: a bus or
+    # ledger failure can never affect the authoritative paths. The ledger
+    # buffers in memory and is flushed off-loop on a scheduler tick (and on
+    # unload), so a high-frequency source like state_changed never blocks the loop.
+    from .kernel import EventLedger, JarvisEventBus
+    event_bus = JarvisEventBus()
+    event_ledger = EventLedger(paths.config_path_str("jarvis", "events.db", hass=hass))
+    event_bus.subscribe_all(event_ledger.record)
+
+    async def _flush_event_ledger(now=None):
+        await hass.async_add_executor_job(event_ledger.flush)
+
+    sched.add("event-ledger-flush", 30, _flush_event_ledger)
+
     # ── Auto-analyze camera events GOING FORWARD (doorbell / person) ─────────
     # The listeners above only CACHE Nest/Frigate events — historically nothing
     # was analyzed unless a user automation called jarvis.analyze_on_event. These
@@ -625,6 +643,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "reminder_watcher":   reminder_watcher,
         "llm_provider_name":  llm_provider_name,
         "schema_version":     CURRENT_SCHEMA_VERSION,
+        "event_bus":          event_bus,
+        "event_ledger":       event_ledger,
     }
 
     # Restore persisted panel settings via centralized jarvis_config module.
@@ -846,6 +866,14 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await hass.async_add_executor_job(stop_log_writer)
     except Exception as exc:
         _LOGGER.debug("Log-writer stop note: %s", exc)
+
+    # Flush any buffered events so the shadow trail isn't lost on unload/reload.
+    event_ledger = data.get("event_ledger")
+    if event_ledger is not None:
+        try:
+            await hass.async_add_executor_job(event_ledger.flush)
+        except Exception as exc:
+            _LOGGER.debug("Event-ledger flush note: %s", exc)
 
     # Remove services registered by this entry using a single source of truth so
     # the reload/unload lifecycle stays symmetric as new services are added.

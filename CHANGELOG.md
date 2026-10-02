@@ -1,3 +1,14 @@
+## [8.6.0] — kernel Phase 1: shadow event bus + correlated decision trail
+
+Phase 1 of the kernel plan (docs/KERNEL_PLAN.md), running in **shadow mode**: the observer, camera and voice paths now publish `JarvisEvent`s alongside their existing logic, and a ledger records them. **Nothing consumes events to drive behaviour** — existing code paths stay authoritative — so there is no behaviour or settings change. The payoff is a queryable, correlated trail that later phases build on, and it is entirely best-effort (a bus or ledger failure can never affect the authoritative paths).
+
+- **In-process event bus** (`kernel/event_bus.py`) — a pure, synchronous pub/sub for `JarvisEvent`s. A failing subscriber is isolated so it can't break a publisher or starve other subscribers; `publish()` never raises.
+- **Event ledger** (`kernel/ledger.py`) — the durable sink: every published event is buffered in memory (cheap, loop-safe) and written to its own SQLite file in batches by an off-loop flush (a scheduler tick, and once on unload), via the `kernel.persistence` seam. A high-frequency source like `state_changed` never blocks the loop, and the buffer is capped so a storm can't grow it without bound. Exposes `query_recent` / `query_by_correlation` for the trail.
+- **Correlated decisions** — `decision_record` gains a `correlation_id` (new column, migrated in place like `ref`) that defaults to an ambient id set per event via a `contextvars`-backed `kernel/correlation.py`. An event handler opens a correlation scope; any decision recorded while handling the event links to it automatically — so event → decision → outcome join into one chain without threading an argument through the ~9 `record()` call sites.
+- **Shadow publishers** — `observer` (`state_changed`, wrapped so decisions during handling inherit the correlation id), `camera` (completed scene analysis), and the voice intent path (`jarvis.process_intent`).
+
+New unit tests (37 across the bus, ledger, correlation, event, persistence and decision-record modules); audit clean (118 modules); full suite green.
+
 ## [8.5.0] — kernel foundation: canonical event type + unified DB access seam
 
 The first additive layer of the staged kernel architecture (docs/KERNEL_PLAN.md, Phase 0). **Nothing is wired to this yet** — no behaviour, settings, or stored-data change — it is pure, tested scaffolding that the rest of the integration will migrate onto one caller at a time in later phases.
