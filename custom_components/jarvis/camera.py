@@ -24,7 +24,6 @@ from typing import Optional
 import aiohttp
 
 from homeassistant.core import HomeAssistant, ServiceCall, Event, callback
-from homeassistant.components.camera import async_get_image as camera_get_image
 from homeassistant.helpers import entity_registry as er, device_registry as dr
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.network import get_url
@@ -42,6 +41,21 @@ except ImportError:
     _RECOGNITION_AVAILABLE = False
 
 _LOGGER = logging.getLogger(__name__)
+
+
+async def camera_get_image(hass, *args, **kwargs):
+    """Fetch a camera snapshot via HA's camera component.
+
+    Imported lazily on purpose: ``homeassistant.components.camera`` pulls in that
+    component's optional, native-backed deps (e.g. TurboJPEG). Importing it at
+    module load would make the whole JARVIS integration fail to import anywhere
+    those aren't installed (a bare test/CI env, or any install without the camera
+    stack), even for code paths that never touch a camera. Deferring the import to
+    call time keeps the integration importable and is harmless at runtime, where
+    the camera component is already loaded by the time we grab a frame."""
+    from homeassistant.components.camera import async_get_image
+    return await async_get_image(hass, *args, **kwargs)
+
 
 VISION_MODEL = "qwen/qwen3.6-27b"
 
