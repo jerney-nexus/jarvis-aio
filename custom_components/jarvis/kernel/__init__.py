@@ -21,7 +21,13 @@ from .event import (
     from_state_changed,
     from_voice_turn,
 )
-from . import situation
+from . import authority, situation
+from .authority import (
+    AuthorityDecision,
+    AuthorityRequest,
+    CapabilityToken,
+    authorize,
+)
 from .event_bus import JarvisEventBus
 from .ledger import EventLedger
 from .situation import InvalidTransition, Situation, SituationManager
@@ -44,4 +50,9 @@ __all__ = [
     "Situation",
     "SituationManager",
     "InvalidTransition",
+    "authority",
+    "authorize",
+    "AuthorityRequest",
+    "AuthorityDecision",
+    "CapabilityToken",
 ]

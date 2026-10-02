@@ -15,7 +15,7 @@ JARVIS stays shippable throughout.
 | 1 — Event bus + correlated ledger | ✅ Shipped | 8.6.0 |
 | 2 — World-model facade | ✅ Shipped | 8.7.0 |
 | 3 — Situation manager | ✅ Shipped | 8.8.0 (machine), 8.8.1 (intrusion shadow) |
-| 4 — Authority / capability engine | ⬜ Not started | 8.9.0 |
+| 4 — Authority / capability engine | 🚧 In progress | 8.9.0 |
 | 5 — Planner → Executor → Verifier | ⬜ Not started | 8.10.0 |
 | 6 — Beliefs · Attention · Model Router | ⬜ Not started | 8.11.0 |
 | 7 — Causal learning | ⬜ Not started | 8.12.0 |
@@ -122,7 +122,7 @@ verdicts match on recorded history.
 
 ## Phase 4 — Authority / capability engine (the safety keystone)
 
-Target release: **8.9.0**
+Target release: **8.9.0** — **🚧 In progress** (pure `kernel/authority.py` engine + capability tokens shipped in 8.9.0; `voice_confirm`/`output_gate`/autonomy delegating in log-only parity mode, then enforce, to follow).
 
 - `kernel/authority.py`: one capability check (capability, identity, context,
   situation, confidence, time, intent, scope). `voice_confirm` / `output_gate` /
