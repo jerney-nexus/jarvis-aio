@@ -13,7 +13,7 @@ JARVIS stays shippable throughout.
 | --- | --- | --- |
 | 0 — Foundations & guardrails | ✅ Shipped | 8.4.3 (HA lifecycle tests + CI gate), 8.5.0 (`JarvisEvent` + persistence seam) |
 | 1 — Event bus + correlated ledger | ✅ Shipped | 8.6.0 |
-| 2 — World-model facade | 🚧 In progress | 8.7.0 |
+| 2 — World-model facade | ✅ Shipped | 8.7.0 |
 | 3 — Situation manager | ⬜ Not started | 8.8.0 |
 | 4 — Authority / capability engine | ⬜ Not started | 8.9.0 |
 | 5 — Planner → Executor → Verifier | ⬜ Not started | 8.10.0 |
@@ -99,7 +99,7 @@ later phase debuggable. Risk: low (shadow-only). Guard: no behavior change.
 
 ## Phase 2 — World-model facade
 
-Target release: **8.7.0** — **🚧 In progress** (`kernel/world_model.py` read facade + parity tests).
+Target release: **8.7.0** — **✅ Shipped** (`kernel/world_model.py` read facade + parity tests).
 
 - `kernel/world_model.py`: a **read facade** over HA state + the knowledge graph +
   identity + scene memory, answering in canonical terms (people / rooms / devices
