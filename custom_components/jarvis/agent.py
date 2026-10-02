@@ -1181,6 +1181,15 @@ async def _exec_control_device(hass: HomeAssistant, args: dict) -> str:
             from . import policy
             ok, note = await policy.confirm_gate(
                 hass, svc_domain, svc_name, entity_id, action.replace("_", " "))
+            # Authority engine, LOG-ONLY parity (kernel hardening H1): record
+            # whether the Phase 4 engine's decision agrees with this live gate,
+            # to validate before enforcement is ever flipped on. Never blocks.
+            try:
+                from . import authority_bridge
+                authority_bridge.record_control_parity(
+                    hass, svc_domain, svc_name, allowed=ok)
+            except Exception:
+                pass
             if not ok:
                 return json.dumps({
                     "status": "awaiting_confirmation",

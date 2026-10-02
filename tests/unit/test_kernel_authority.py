@@ -109,3 +109,57 @@ def test_policy_error_fails_closed(auth):
         raise RuntimeError("policy bug")
     d = auth.authorize(_req(auth, "announce"), policy=_boom)
     assert d.denied and "policy error" in d.reason
+
+
+# ── 8.13.0: token expiry / revocation + parity tracker ──────────────────────────
+def test_expired_token_denied(auth):
+    tok = auth.CapabilityToken(holder="friday", capabilities=frozenset({"light.turn_on"}),
+                               expires_at=100.0)
+    d = auth.authorize(_req(auth, "light.turn_on", actor="friday", token=tok,
+                            confidence=1.0, now=200.0))
+    assert d.denied and "expired" in d.reason
+
+
+def test_unexpired_token_allowed(auth):
+    tok = auth.CapabilityToken(holder="friday", capabilities=frozenset({"light.turn_on"}),
+                               expires_at=1000.0)
+    d = auth.authorize(_req(auth, "light.turn_on", actor="friday", token=tok,
+                            confidence=1.0, now=200.0))
+    assert d.allowed
+
+
+def test_revoked_token_denied(auth):
+    tok = auth.CapabilityToken(holder="friday", capabilities=frozenset({"light.turn_on"}))
+    d = auth.authorize(_req(auth, "light.turn_on", actor="friday", token=tok,
+                            confidence=1.0, revoked=frozenset({tok.token_id})))
+    assert d.denied and "revoked" in d.reason
+
+
+def test_derive_ttl_never_outlives_parent(auth):
+    parent = auth.CapabilityToken(holder="jarvis", capabilities=frozenset({"*"}),
+                                  expires_at=1000.0)
+    # ttl would push past the parent's expiry → clamped to the parent's.
+    child = parent.derive("friday", {"light.turn_on"}, ttl=5000.0, now=0.0)
+    assert child.expires_at == 1000.0
+    # a shorter ttl wins
+    child2 = parent.derive("friday", {"light.turn_on"}, ttl=100.0, now=0.0)
+    assert child2.expires_at == 100.0
+
+
+def test_derive_assigns_new_token_id(auth):
+    parent = auth.CapabilityToken(holder="jarvis", capabilities=frozenset({"*"}))
+    child = parent.derive("friday", {"light.turn_on"})
+    assert child.token_id != parent.token_id
+
+
+def test_parity_tracks_agreement(auth):
+    p = auth.AuthorityParity()
+    allow = auth.authorize(_req(auth, "announce"))
+    assert p.record(allow, auth.ALLOW) is True
+    sec = auth.authorize(_req(auth, "lock.unlock", identity="Sam"))   # CONFIRM
+    assert p.record(sec, auth.ALLOW) is False   # engine would gate; actual allowed
+    assert p.agree == 1 and p.disagree == 1
+    assert p.agreement_rate == 0.5
+    s = p.summary()
+    assert s["recent_mismatches"][0]["capability"] == "lock.unlock"
+    assert s["by_capability"]["announce"] == [1, 0]

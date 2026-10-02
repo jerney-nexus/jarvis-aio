@@ -169,6 +169,36 @@ Risk: medium; isolated to the learning layer.
 
 ---
 
+## Post-migration hardening (external audit follow-up)
+
+After Phases 0–7 shipped the kernel primitives, an external architecture audit
+(ChatGPT; `docs` upload) was reviewed against the codebase. ~40% of it was
+already shipped and a few items were over-engineered for a single-home
+deployment; the usable, novel work is tracked here, each as its own release.
+
+| # | Hardening item | Status | Release |
+| --- | --- | --- | --- |
+| H1 | Authority: capability expiry/revocation + log-only parity tracker | 🚧 In progress | 8.13.0 |
+| H2 | Kernel-adoption / bypass matrix + JARVIS Constitution + emergency hierarchy | ⬜ | 8.14.0 |
+| H3 | Loop detection (action → event → action) | ⬜ | 8.15.0 |
+| H4 | Execution journal + crash recovery | ⬜ | 8.16.0 |
+
+Deferred as over-engineered for this deployment (not planned): a full 7-type
+memory-lifecycle taxonomy, a broad logical-persistence API, saga-style
+compensation beyond verify+idempotency, and a full event replay/simulation
+subsystem. Hard authority *enforcement* (flipping parity → deny) is a separate,
+owner-gated step once parity holds on real traffic.
+
+### H1 — Authority hardening (8.13.0)
+
+- `CapabilityToken` gains `expires_at` + `token_id`; `authorize` denies an
+  expired or revoked token; `derive(..., ttl=)` clamps a child's expiry to its
+  parent's (a child never outlives its issuer).
+- `AuthorityParity`: a log-only tracker comparing the engine's decision to the
+  actual behaviour, so enforcement is flipped on only once parity holds.
+
+---
+
 ## Sequencing rationale
 
 Observability (Phase 1) comes before everything else, because you cannot safely
