@@ -52,6 +52,14 @@ kernel-authoritative"* is far more meaningful than *"Kernel Phase N completed."*
 - **`goals` / `proactive` / `friday` / `homer`** — not yet wired to any kernel
   contract.
 
+> **Actuator contract (8.26.0):** `control_device` now constructs a canonical
+> `kernel.actuator.ActuatorRequest` (who/intent/target/correlation/idempotency)
+> and logs it in **shadow** — a step toward the universal execution contract. It
+> is recorded in `KERNEL_ADOPTION.md` (`actuator` = shadow), not here, because
+> shadow-*logging* the request object does not yet make the path *pass through* a
+> pipeline contract. These cells rise only when execution actually routes through
+> the contract (Authority → preconditions → actuator → postconditions → outcome).
+
 ## How to raise the number
 
 The matrix is driven by `_PATHS` in `scripts/kernel_coverage.py`. To record real

@@ -1200,6 +1200,20 @@ async def _exec_control_device(hass: HomeAssistant, args: dict) -> str:
                     "entity_id": entity_id,
                     "message": note or f"Confirmation required before {action} on {entity_id}.",
                 })
+            # Universal actuator contract (MCU A5), SHADOW: describe this
+            # actuation as one canonical ActuatorRequest and log it — no
+            # behaviour change. As the actuator paths migrate, execution routes
+            # through this shape (who/intent/target/correlation/idempotency).
+            try:
+                from .kernel import build_actuator_request, correlation as _corr
+                _areq = build_actuator_request(
+                    f"{svc_domain}.{svc_name}", target=entity_id,
+                    params=dict(svc_data), intent=action.replace("_", " "),
+                    correlation_id=_corr.current(),
+                    idempotency_key=f"{entity_id}:{action}")
+                _LOGGER.debug("actuator(shadow): %s", _areq.to_dict())
+            except Exception:
+                pass
             await hass.services.async_call(svc_domain, svc_name, svc_data, blocking=True)
         else:
             return json.dumps({"error": f"Unknown action: {action}"})

@@ -22,6 +22,7 @@ from .event import (
     from_voice_turn,
 )
 from . import (
+    actuator,
     attention,
     authority,
     beliefs,
@@ -34,6 +35,7 @@ from . import (
     router,
     situation,
 )
+from .actuator import ActuatorOutcome, ActuatorRequest, build_actuator_request
 from .loop_detect import LoopDetector, LoopVerdict
 from .journal import ExecutionJournal, JournaledStep, RecoveryReport, recover
 from .budget import AgencyBudget, BudgetLimits, BudgetVerdict
@@ -112,4 +114,8 @@ __all__ = [
     "AgencyBudget",
     "BudgetLimits",
     "BudgetVerdict",
+    "actuator",
+    "ActuatorRequest",
+    "ActuatorOutcome",
+    "build_actuator_request",
 ]
