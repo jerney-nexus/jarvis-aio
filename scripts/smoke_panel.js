@@ -224,8 +224,8 @@ const hass = {
       return {
         residents: _residents.slice(),
         recent: [
-          { name: "Sam", camera_entity: "camera.front", camera: "front_door", confidence: 94.0, age_seconds: 20, is_unknown: false, is_resident: _residents.includes("Sam"), source: "recent_cache" },
-          { name: "Quentin", camera_entity: "camera.front", camera: "front_door", confidence: 88.0, age_seconds: 90, is_unknown: false, is_resident: _residents.includes("Quentin"), source: "recent_cache" },
+          { name: "Sam", camera_entity: "camera.front", camera: "front_door", confidence: 94.0, age_seconds: 20, is_unknown: false, is_resident: _residents.includes("Sam"), snapshot_url: "/local/jarvis/faces/sam.jpg", source: "recent_cache" },
+          { name: "Quentin", camera_entity: "camera.front", camera: "front_door", confidence: 88.0, age_seconds: 90, is_unknown: false, is_resident: _residents.includes("Quentin"), snapshot_url: null, source: "recent_cache" },
           { name: "Unknown", camera_entity: "camera.back", camera: "backyard", confidence: 0.0, age_seconds: 300, is_unknown: true, is_resident: false, source: "frigate_sensor" },
         ],
         recognition_source: "frigate",
@@ -975,9 +975,12 @@ setTimeout(async () => {
   const _facesBody = el.shadowRoot.getElementById("faces-body")?.innerHTML || "";
   const _facesSections = [...el.shadowRoot.querySelectorAll(".faces-section-head > span:first-child")]
     .map(s => s.textContent.trim());
-  const _samCard = [...el.shadowRoot.querySelectorAll(".faces-card")]
-    .find(c => (c.querySelector(".faces-card-name")?.textContent || "").trim() === "Sam");
-  const _samImg = _samCard?.querySelector("img[data-faces-cam]");
+  const _cardByName = (nm) => [...el.shadowRoot.querySelectorAll(".faces-card")]
+    .find(c => (c.querySelector(".faces-card-name")?.textContent || "").trim() === nm);
+  const _samCard = _cardByName("Sam");
+  const _samImg = _samCard?.querySelector(".faces-thumb-img");
+  const _quentinCard = _cardByName("Quentin");
+  const _quentinImg = _quentinCard?.querySelector("img[data-faces-cam]");
   checks.push(
     ["faces tab has add-resident input + button",
       !!el.shadowRoot.querySelector("#faces-add-name") && !!el.shadowRoot.querySelector("#faces-add-btn")],
@@ -986,9 +989,14 @@ setTimeout(async () => {
     ["faces tab renders a resident card with the name under the snapshot",
       !!_samCard && !!_samCard.querySelector(".faces-thumb")],
     ["resident card badges the resident", /faces-badge resident/.test(_samCard?.innerHTML || "")],
-    ["resident card requests a camera snapshot", !!_samImg],
-    ["snapshot loads into the card image",
-      !!_samImg && /^data:image\/jpeg;base64,/.test(_samImg.getAttribute("src") || "")],
+    // Phase 2: a pinned recognition-time snapshot is shown directly, no live fetch.
+    ["resident card uses the pinned recognition-time snapshot",
+      !!_samImg && _samImg.getAttribute("src") === "/local/jarvis/faces/sam.jpg"
+      && !_samCard.querySelector("img[data-faces-cam]")],
+    // A face with no pin falls back to the live camera frame via WS.
+    ["un-pinned face falls back to a live camera snapshot", !!_quentinImg],
+    ["live-fallback snapshot loads into the card image",
+      !!_quentinImg && /^data:image\/jpeg;base64,/.test(_quentinImg.getAttribute("src") || "")],
     ["recently-seen section badges an unknown face", /faces-badge unknown/.test(_facesBody)],
     ["recently-seen offers to flag a known non-resident (Quentin)",
       /data-faces-add="Quentin"/.test(_facesBody)],
