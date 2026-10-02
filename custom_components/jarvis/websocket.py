@@ -856,6 +856,7 @@ async def ws_get_panel_data(
                 "web_research_llm_fallback": bool(_runtime_opt(hass, entry, "web_research_llm_fallback", False)),
                 "calendar_tight_gap_min": _runtime_opt(hass, entry, "calendar_tight_gap_min", 15),
                 "recognition_source":   str(_runtime_opt(hass, entry, "recognition_source", "both") or "both"),
+                "output_language":      str(_runtime_opt(hass, entry, "output_language", "") or ""),
                 "voice_confirm_enabled": bool(_runtime_opt(hass, entry, "voice_confirm_enabled", False)),
                 "voice_confirm_mode":   str(_runtime_opt(hass, entry, "voice_confirm_mode", "auto") or "auto"),
                 "intrusion_response_timeout": _runtime_opt(hass, entry, "intrusion_response_timeout", 120),
@@ -1435,6 +1436,7 @@ PANEL_WRITABLE_KEYS = {
     "biometrics_enabled",        # bool: read wearable context (opt-in) (v6.63.0)
     "biometric_entities",        # dict: explicit kind→entity_id overrides
     "recognition_source",        # str: both | doubletake | frigate (v6.64.1)
+    "output_language",           # str: ISO code (e.g. "de") or ""/"auto" to follow HA; steers JARVIS's spoken/written output (#148)
     "voice_confirm_enabled",      # bool: voice-confirm sensitive actions (v6.67.0)
     "voice_confirm_mode",         # str: native | gated | auto
     "voice_confirm_entities",     # list: extra entities to confirm / !exempt

@@ -124,3 +124,49 @@ def test_language_name_empty_for_english(language):
 def test_language_name_maps_and_falls_back(language):
     assert language.language_name(_hass("de")) == "German"
     assert language.language_name(_hass("xx")) == "xx"
+
+
+# ── JARVIS-specific output_language override (#148) ──────────────────────────
+# A household can run Home Assistant in one language but make JARVIS speak
+# another — the case where briefings came out in the HA language because that
+# was the only knob.
+
+@pytest.fixture
+def set_output_language(load, monkeypatch):
+    """Patch jarvis_config.get so language.py reads a chosen output_language."""
+    jc = load("jarvis_config")
+
+    def _set(value):
+        real = {"output_language": value}
+        monkeypatch.setattr(jc, "get", lambda k, d=None: real.get(k, d))
+    return _set
+
+
+def test_jarvis_output_language_overrides_global(language, set_output_language):
+    set_output_language("de")
+    # HA is Russian, but JARVIS is set to German → German wins.
+    assert language.configured_language(_hass("ru")) == "de"
+    assert "German" in language.language_directive(_hass("ru"))
+
+
+def test_request_language_beats_jarvis_output_language(language, set_output_language):
+    set_output_language("de")
+    # An explicit per-request (voice pipeline) language still wins over the
+    # JARVIS setting, so a request spoken in Russian is answered in Russian.
+    assert language.configured_language(_hass("en"), "ru") == "ru"
+
+
+def test_jarvis_output_language_auto_follows_global(language, set_output_language):
+    set_output_language("auto")
+    assert language.configured_language(_hass("ru")) == "ru"
+
+
+def test_jarvis_output_language_blank_follows_global(language, set_output_language):
+    set_output_language("")
+    assert language.configured_language(_hass("ru")) == "ru"
+
+
+def test_jarvis_output_language_english_silences_directive(language, set_output_language):
+    # Explicitly choosing English on a non-English home turns the directive off.
+    set_output_language("en")
+    assert language.language_directive(_hass("ru")) == ""

@@ -26,18 +26,39 @@ _LANG_NAMES = {
 }
 
 
+def _jarvis_output_language() -> str:
+    """JARVIS's own output-language setting, or ``""`` when unset / 'auto'.
+
+    This lets a household run Home Assistant's UI in English (or any language)
+    while still having JARVIS *speak and write* in another — the common case in
+    issue #148, where briefings and camera analysis came out in English because
+    the only language source was HA's global setting. Never raises."""
+    try:
+        from . import jarvis_config
+        val = (jarvis_config.get("output_language", "") or "").strip()
+    except Exception:
+        return ""
+    return "" if val.lower() in ("", "auto", "default") else val
+
+
 def configured_language(hass, lang: str | None = None) -> str:
     """The language JARVIS should answer in, as a primary ISO-639 subtag
     (e.g. ``"de"`` for ``"de-DE"``), ``"en"`` when unset or on error.
 
-    ``lang`` is an optional per-request override — the conversation / voice
-    pipeline language (``user_input.language``). When given it wins over Home
-    Assistant's global setting, so a request coming through a German satellite
-    is answered in German even in a household whose global language is Russian
-    (the case that produced wrong-language, garbled voice replies). Never
-    raises."""
+    Resolution order (highest first):
+      1. ``lang`` — a per-request override, the conversation / voice pipeline
+         language (``user_input.language``). A request coming through a German
+         satellite is answered in German even in a household whose global
+         language is Russian (the case that produced garbled voice replies).
+      2. JARVIS's own ``output_language`` setting — so a home can have JARVIS
+         speak German while Home Assistant's UI stays English (issue #148).
+      3. Home Assistant's global ``language``.
+      4. ``"en"``.
+
+    Never raises."""
     try:
-        raw = lang or getattr(hass.config, "language", None) or "en"
+        raw = lang or _jarvis_output_language() \
+            or getattr(hass.config, "language", None) or "en"
         return (raw or "en").split("-")[0].lower()
     except Exception:
         return "en"
