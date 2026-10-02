@@ -1845,16 +1845,20 @@ dotLabel.textContent = lightBtn.classList.contains("adl")
     } catch (_) {}
     return (this._hass && this._hass.language) || "en";
   }
-  _loadUiStrings() {
-    const full = (this._resolveUiLang() || "en").toLowerCase();
+  _loadUiStrings(explicit) {
+    // `explicit` (the just-chosen language) wins over whatever the DOM/config
+    // currently reports, so the language switch can't lag by one selection.
+    // Returns a promise so the caller can order save/re-render after the load.
+    const picked = (explicit && explicit !== "auto") ? explicit : this._resolveUiLang();
+    const full = (picked || "en").toLowerCase();
     const base = full.split("-")[0];
-    if (this._uiLangLoaded === full) return;   // already handled this language
+    if (this._uiLangLoaded === full) return Promise.resolve();   // already handled this language
     this._uiLangLoaded = full;
-    if (base === "en") { this._uiStrings = null; return; }
+    if (base === "en") { this._uiStrings = null; return Promise.resolve(); }
     // Try the full tag first (e.g. pt-br.json, zh-hans.json), then fall back to the base
     // language (pt.json, zh.json), so region variants can be added without code changes.
     const grab = (lang) => fetch("/jarvis_panel_static/i18n/" + lang + ".json").then((r) => (r.ok ? r.json() : null));
-    grab(full)
+    return grab(full)
       .then((d) => (d || (full !== base ? grab(base) : null)))
       .then((dict) => { this._uiStrings = dict || null; if (this._hass && this.shadowRoot) this._render(); })
       .catch(() => { this._uiStrings = null; });
@@ -5919,6 +5923,11 @@ ${this._renderExcludedEntities(d)}
       el.addEventListener("change", async () => {
         const key = el.getAttribute("data-cfg-key");
         if (!key) return;
+        // ui_language is owned entirely by the dedicated handler below, which
+        // orders the string load before the save/re-render; letting the generic
+        // handler also save + re-fetch here raced it and lagged the switch by one
+        // selection (#55).
+        if (key === "ui_language") return;
         let value = el.value;
         if (el.type === "number") value = (value === "" ? null : Number(value));
         await this._saveConfig(key, value);
@@ -5926,12 +5935,23 @@ ${this._renderExcludedEntities(d)}
       });
     });
 
-    // Language override: the generic handler above saves ui_language; this reloads the
-    // matching translation file and re-renders so the switch is immediate (v7.94.0).
+    // Language override: this is the SOLE handler for ui_language (the generic
+    // cfg handler skips it). It applies the chosen language deterministically —
+    // load the matching strings for the explicit choice first, then persist, then
+    // re-render — so the switch is immediate and never lags by one selection (#55).
     const _langSel = this.shadowRoot.getElementById("ui-lang-select");
     if (_langSel && !_langSel._langWired) {
       _langSel._langWired = true;
-      _langSel.addEventListener("change", () => { this._uiLangLoaded = null; this._loadUiStrings(); });
+      _langSel.addEventListener("change", async () => {
+        const chosen = String(_langSel.value || "auto");
+        // Reflect the choice in local config immediately so neither the save
+        // round-trip nor the re-render can revert to the previous value.
+        try { const c = this._data && this._data(); if (c && c.config) c.config.ui_language = chosen; } catch (_) {}
+        this._uiLangLoaded = null;
+        await this._loadUiStrings(chosen);
+        try { await this._saveConfig("ui_language", chosen); } catch (_) {}
+        await this._fetchAndRender();
+      });
     }
 
     // AI Models: provider + live-fetched model dropdowns, with custom fallback.
