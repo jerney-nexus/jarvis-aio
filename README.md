@@ -6,7 +6,7 @@
 
 An autonomous AI butler for Home Assistant — voice, vision, and a reasoning core that learns your home and watches over it.
 
-<img src="docs/media/hero-hud.svg" alt="JARVIS Iron Man HUD command center" width="100%">
+<img src="docs/media/residence-3d.png" alt="JARVIS HUD Residence view: a live 3D model of the house with occupied rooms glowing" width="100%">
 
 [![HACS Integration](https://img.shields.io/badge/HACS-Integration-41BDF5?logo=home-assistant&logoColor=white)](https://github.com/sam3gp8/jarvis-aio)
 [![Release](https://img.shields.io/github/v/release/sam3gp8/jarvis-aio?color=00d9ff)](https://github.com/sam3gp8/jarvis-aio/releases)
@@ -52,16 +52,16 @@ Everything past this point — vision, doorbell analysis, the Iron Man HUD's liv
 <div align="center">
 <table border="0">
 <tr>
-<td width="50%"><img src="docs/media/feed-card.svg" alt="Cognitive Core activity feed with urgency classification" width="100%"></td>
-<td width="50%"><img src="docs/media/camera-diag.svg" alt="Camera Watch with end-to-end frame-source diagnostics" width="100%"></td>
+<td width="30%"><img src="docs/media/activity-feed.png" alt="Activity feed: each home event marked flagged for reasoning or not worth considering" width="100%"></td>
+<td width="70%"><img src="docs/media/areas.png" alt="Areas grid: per-room sensors, occupancy, temperature and humidity" width="100%"></td>
 </tr>
 <tr>
-<td align="center"><em>The Cognitive Core classifies every event by urgency — escalating the anomalous, muting the routine.</em></td>
-<td align="center"><em>Camera intelligence: per-camera diagnostics, go2rtc restream override, rename &amp; indoor/outdoor designation.</em></td>
+<td align="center"><em>The Cognitive Core triages every event: routine ones stay silent, unusual ones get a closer look.</em></td>
+<td align="center"><em>Every room at a glance: sensors, live occupancy, temperature and humidity.</em></td>
 </tr>
 </table>
 
-<sub>Visuals reflect the panel's actual design system. The live dashboard renders in your browser inside Home Assistant.</sub>
+<sub>Screenshots from a live install. The dashboard runs in your browser inside Home Assistant.</sub>
 </div>
 
 ## FAQ
