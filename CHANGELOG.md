@@ -1,3 +1,13 @@
+## [8.26.1] — fix: register the conversation agent earlier at startup
+
+Reduces the transient ESP32 voice errors *"intent recognition engine conversation.jarvis is not found"* seen at boot/reconnect.
+
+The `conversation.jarvis` entity is correct and available — the errors were a **startup race**: the voice satellites resolve the agent the moment they connect, but JARVIS forwarded its conversation platform *after* the disk-touching panel-settings restore (two `config.json` reads) and service registration, so the agent registered late and an early voice request found nothing.
+
+`async_setup_entry` now forwards the conversation platform **as early as its dependencies allow** — right after the shared LLM client and `hass.data` entry are ready and services are registered, and *before* the panel-settings restore. The agent reads its runtime config lazily, so the brief window before the restore completes just falls back to defaults. No functional change beyond ordering; the restore, Sentinel/reminder start and observer all still run, just after the agent is live.
+
+Full suite + real-HA lifecycle integration test green. (The errors are inherent to HA's load/reload lifecycle and can still appear briefly during a settings-change reload; this shrinks the common boot window.)
+
 ## [8.26.0] — universal actuator contract (MCU audit A5)
 
 Final MCU-audit shortlist item (point 17: *"perhaps the most important implementation rule… every actuator should have one interface"*, + point 18's complete outcome model). **Additive, shadow** — `control_device` describes itself through the contract but execution is unchanged.
