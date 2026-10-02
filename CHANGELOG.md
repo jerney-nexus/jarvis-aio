@@ -1,3 +1,14 @@
+## [8.25.0] — richer authority parity inputs (MCU audit A4)
+
+Fourth MCU-audit item (point 3: the parity bridge was only feeding the engine capability/identity/confidence, not the full request). **Still log-only** — the parity bridge never changes the live gate's outcome.
+
+- **`authority_bridge.record_control_parity`** now accepts and threads the full set of authoritative inputs into the engine request: **`situation`** (the active home situation), **`scope`** (the target area/entity), **`intent`** (why), **`token`** (a capability token — which drives delegation/expiry/revocation), and free-form **`context`** — not just capability/identity/confidence.
+- **`agent._exec_control_device`** now passes `intent` (the human action, e.g. "turn on") and `scope` (the entity id) when recording parity.
+
+Why it matters: feeding the engine the request it will *actually* decide on — while still log-only — is what makes the eventual enforce-flip trustworthy. Parity is now measured against the real decision, not a stripped-down one. (A capability token that doesn't grant the action makes the engine DENY even when the live gate allowed — proof the richer inputs are genuinely in the decision.)
+
+2 new bridge tests (richer inputs accepted + still log-only; token actually affects the decision). No behaviour change — authority remains log-only/owner-gated. Full suite green.
+
 ## [8.24.0] — agency budget primitive (MCU audit A3)
 
 Third MCU-audit item (point 21: "a correct system can still produce runaway behavior"). **Additive, pure** — a new kernel primitive; nothing consults it yet, so no runtime change.

@@ -32,15 +32,28 @@ def _parity(hass):
 
 
 def record_control_parity(hass, domain: str, service: str, *, allowed: bool,
-                          identity=None, confidence: float = 1.0):
+                          identity=None, confidence: float = 1.0,
+                          situation=None, scope=None, intent=None,
+                          token=None, context=None):
     """Record the authority engine's decision for ``domain.service`` against the
     live gate's ``allowed`` outcome. LOG-ONLY. Returns the engine decision (or
-    None on failure)."""
+    None on failure).
+
+    The engine request is built with the *full* set of authoritative inputs the
+    caller can supply — ``situation`` (the active home situation), ``scope`` (the
+    target area/entity), ``intent`` (why), ``token`` (a capability token, which
+    drives delegation/expiry/revocation), and free-form ``context`` — not just
+    capability/identity/confidence (MCU audit A4). Feeding the real request now,
+    while still log-only, is what makes the eventual enforce-flip trustworthy:
+    parity is measured against the decision the engine would *actually* make.
+    """
     try:
         from .kernel import AuthorityRequest, authority as A, authorize
         cap = f"{domain}.{service}"
         decision = authorize(AuthorityRequest(
-            capability=cap, identity=identity, confidence=confidence))
+            capability=cap, identity=identity, confidence=confidence,
+            situation=situation, scope=scope, intent=intent, token=token,
+            context=dict(context or {})))
         # Map the gate result into the engine's vocabulary: the gate either lets
         # the action proceed (ALLOW) or holds it for confirmation (CONFIRM).
         actual = A.ALLOW if allowed else A.CONFIRM

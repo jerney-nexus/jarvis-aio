@@ -49,3 +49,30 @@ def test_summary_empty_when_nothing_recorded(ab):
                                                  "agreement_rate": 1.0,
                                                  "by_capability": {},
                                                  "recent_mismatches": []})
+
+
+def test_record_accepts_richer_inputs_and_stays_log_only(ab):
+    # MCU A4: the bridge threads situation/scope/intent/token/context into the
+    # engine request. Still log-only — recording never raises and the gate's
+    # outcome is untouched.
+    hass = FakeHass()
+    d = ab.record_control_parity(
+        hass, "light", "turn_on", allowed=True,
+        intent="turn on", scope="light.kitchen",
+        situation="normal", context={"room": "kitchen"})
+    assert d is not None and d.decision == "allow"
+    assert ab.parity_summary(hass)["agree"] == 1
+
+
+def test_token_input_affects_engine_decision(ab, load):
+    # Proof the token is actually fed into the decision (A4): a capability token
+    # that does NOT grant this action makes the engine DENY (delegation can't
+    # escalate) — even though the live gate let it through (allowed=True).
+    auth = load("kernel.authority")
+    tok = auth.CapabilityToken(holder="friday", capabilities=frozenset({"climate"}))
+    hass = FakeHass()
+    d = ab.record_control_parity(
+        hass, "light", "turn_on", allowed=True, token=tok)
+    assert d is not None and d.decision == auth.DENY
+    # Still log-only: the mismatch is recorded, nothing is blocked.
+    assert ab.parity_summary(hass)["disagree"] == 1
