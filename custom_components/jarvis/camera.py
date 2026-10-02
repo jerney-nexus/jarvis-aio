@@ -1563,16 +1563,30 @@ def register_event_listeners(hass: HomeAssistant) -> list:
     """
     unsubs = []
 
+    # These handlers cache event data and fire `jarvis_camera_event` via
+    # hass.bus.async_fire — a loop-only API. They must be registered as
+    # `@callback` so HA runs them on the event loop; a bare lambda is neither a
+    # callback nor a coroutine, so HA dispatches it to an executor thread, and the
+    # async_fire inside then trips HA's thread-safety guard (HA 2026.x). The
+    # bodies are non-blocking, so loop execution is correct.
+    @callback
+    def _nest_listener(e: Event) -> None:
+        _handle_nest_event(hass, e)
+
+    @callback
+    def _frigate_listener(e: Event) -> None:
+        _handle_frigate_event(hass, e)
+
     # Nest — the integration fires events like 'nest_event' or device triggers
     try:
-        unsubs.append(hass.bus.async_listen("nest_event", lambda e: _handle_nest_event(hass, e)))
+        unsubs.append(hass.bus.async_listen("nest_event", _nest_listener))
     except Exception as exc:
         _LOGGER.debug("JARVIS: could not subscribe to nest_event: %s", exc)
 
     # Frigate — events are on the MQTT bus; HA re-fires them as 'frigate_event'
     # but the most reliable source is the bus event from the Frigate HA integration
     try:
-        unsubs.append(hass.bus.async_listen("frigate_event", lambda e: _handle_frigate_event(hass, e)))
+        unsubs.append(hass.bus.async_listen("frigate_event", _frigate_listener))
     except Exception as exc:
         _LOGGER.debug("JARVIS: could not subscribe to frigate_event: %s", exc)
 

@@ -1,3 +1,14 @@
+## [8.17.0] — fix: event-loop thread-safety for bus listeners
+
+Repairs the dominant warning/error class in the Home Assistant logs (HA 2026.x): JARVIS was calling loop-only APIs from executor threads, which HA's thread-safety guard flags as *"calls `…` from a thread other than the event loop, which may cause Home Assistant to crash or data to corrupt"* — and which left the `_process_event` coroutine **never awaited**.
+
+Root cause: a bus listener registered with `hass.bus.async_listen` that is **neither a `@callback` nor a coroutine** is dispatched by HA to an executor worker thread. Two such listeners then called loop-only APIs off-loop:
+
+- **`observer._state_changed_handler`** was a plain nested function → ran off-loop → its `async_create_task(_process_event(event))` (observer.py:582) tripped the guard and dropped the coroutine (~60 occurrences/boot, plus the "coroutine never awaited" warnings). Fixed by making it a module-level **`@callback`**; its body is non-blocking, so loop execution is correct.
+- **`camera` Frigate/Nest listeners** were registered as bare lambdas → ran off-loop → `hass.bus.async_fire("jarvis_camera_event", …)` (camera.py:1547) tripped the guard. Fixed by registering **`@callback`** wrappers. (`camera_learning.on_camera_event` stays an executor listener — it only buffers via the state logger and must not run on the loop.)
+
+New regression tests (3): the camera Frigate/Nest listeners and the observer `state_changed` listener now assert the `@callback` marker. Audit clean; full suite green. No functional/behaviour change beyond running these handlers on the correct thread.
+
 ## [8.16.0] — kernel hardening H4: execution journal + crash recovery
 
 Final post-migration hardening item (docs/KERNEL_PLAN.md → "Post-migration hardening"). **No behaviour change** — additive, built on the existing persistence seam.

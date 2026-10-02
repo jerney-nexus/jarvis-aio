@@ -709,3 +709,10 @@ async def test_speak_uses_fallback_and_survives_service_and_filter_errors(observ
 
     monkeypatch.setattr(fake_hass.services, "async_call", failed_call)
     await observer._speak("hello", targets=["media_player.kitchen"])
+
+def test_state_changed_handler_is_callback(observer):
+    """Regression: the registered state_changed listener must be @callback so HA
+    runs it on the event loop; off-loop it would trip the thread-safety guard on
+    async_create_task(_process_event(...)) and leave the coroutine never awaited."""
+    assert getattr(observer._state_changed_handler, "_hass_callback", False) is True
+    assert getattr(observer._on_state_changed, "_hass_callback", False) is True
