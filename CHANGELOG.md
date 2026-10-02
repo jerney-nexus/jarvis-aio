@@ -1,3 +1,12 @@
+## [8.19.0] — fix: infrastructure audit no longer dropped to a hardcoded area
+
+Repairs the log warning *"jarvis.speak: unknown area 'office' — ignoring"*. The 15-minute infrastructure-health audit spoke its alerts to a hardcoded placeholder area (`AUDIT_TARGET_AREA = "office"`). On any install without an "office" area — the common case — every audit alert was **silently dropped** at the speak gate.
+
+- **Configurable audit area** — the audit target now comes from the `infra_audit_area` config key (an area id / name / alias, resolved through the existing tolerant matcher). The hardcoded `"office"` default is gone (now empty = "no fixed area").
+- **Never drop an infra alert** — when no audit area is configured, or the configured one doesn't resolve, the audit now **broadcasts house-wide** instead of dropping. This goes through a new opt-in `broadcast: true` flag on `jarvis.speak`, which skips strict area resolution and uses the existing house-broadcast speaker set (`_resolve_targets`' broadcast fallback). Normal area-targeted `jarvis.speak` calls are unchanged — an unknown area without `broadcast` still logs and drops as before.
+
+New tests (5): `_audit_speak_target` picks the configured area when it resolves and broadcasts when unset/unresolvable; `broadcast: true` dispatch skips area resolution; strict dispatch still drops an unknown area. Full suite green. No change to normal `jarvis.speak` behaviour.
+
 ## [8.18.0] — fix: appliance monitor AttributeError on native appliances
 
 Repairs the log warning *"Appliance monitor start failed (non-fatal): '_NativeAppliance' object has no attribute 'trigger_state'"*.

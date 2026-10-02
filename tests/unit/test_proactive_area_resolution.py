@@ -92,3 +92,56 @@ def test_unknown_area_returns_none(pa):
 
 def test_known_area_labels_for_diagnostics(pa):
     assert pa._known_area_labels(None) == ["Living Room", "Office", "Study"]
+
+
+# ── infra-audit target + broadcast (8.19.0) ──────────────────────────────────
+
+def _inject_jarvis_config(monkeypatch, value):
+    cfg = types.ModuleType("jc.jarvis_config")
+    cfg.get = lambda key, default=None: value if value is not None else default
+    monkeypatch.setitem(sys.modules, "jc.jarvis_config", cfg)
+
+
+def test_audit_speak_target_uses_configured_area(pa, monkeypatch):
+    _inject_jarvis_config(monkeypatch, "office")  # resolves to the Office area
+    assert pa._audit_speak_target(None) == {"target_area": "office"}
+
+
+def test_audit_speak_target_unset_broadcasts(pa, monkeypatch):
+    _inject_jarvis_config(monkeypatch, "")  # no fixed area configured
+    assert pa._audit_speak_target(None) == {"target_area": "", "broadcast": True}
+
+
+def test_audit_speak_target_unresolvable_area_broadcasts(pa, monkeypatch):
+    _inject_jarvis_config(monkeypatch, "nonexistent")  # not a real area
+    assert pa._audit_speak_target(None) == {"target_area": "", "broadcast": True}
+
+
+def test_dispatch_speak_broadcast_skips_area_resolution(pa, monkeypatch):
+    import asyncio
+    seen = {}
+
+    async def _fake_announce(hass, message, area_id, critical):
+        seen["area_id"] = area_id
+        seen["message"] = message
+
+    monkeypatch.setattr(pa, "_announce", _fake_announce)
+    asyncio.run(pa._dispatch_speak(
+        None, {"message": "infra alert", "target_area": "", "broadcast": True}))
+    # Broadcast path announces with an empty area id (→ house broadcast set),
+    # never dropping the alert for a missing area.
+    assert seen == {"area_id": "", "message": "infra alert"}
+
+
+def test_dispatch_speak_unknown_area_still_drops_without_broadcast(pa, monkeypatch):
+    import asyncio
+    called = {"n": 0}
+
+    async def _fake_announce(hass, message, area_id, critical):
+        called["n"] += 1
+
+    monkeypatch.setattr(pa, "_announce", _fake_announce)
+    asyncio.run(pa._dispatch_speak(
+        None, {"message": "x", "target_area": "nonexistent"}))
+    # Strict semantics preserved for normal callers: unknown area → dropped.
+    assert called["n"] == 0
