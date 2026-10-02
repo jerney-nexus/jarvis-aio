@@ -25,6 +25,7 @@ from . import (
     attention,
     authority,
     beliefs,
+    budget,
     causal,
     journal,
     loop_detect,
@@ -35,6 +36,7 @@ from . import (
 )
 from .loop_detect import LoopDetector, LoopVerdict
 from .journal import ExecutionJournal, JournaledStep, RecoveryReport, recover
+from .budget import AgencyBudget, BudgetLimits, BudgetVerdict
 from .causal import CausalHypothesis, CausalModel
 from .attention import AttentionContext, AttentionDecision, AttentionRequest, arbitrate
 from .authority import (
@@ -106,4 +108,8 @@ __all__ = [
     "JournaledStep",
     "RecoveryReport",
     "recover",
+    "budget",
+    "AgencyBudget",
+    "BudgetLimits",
+    "BudgetVerdict",
 ]

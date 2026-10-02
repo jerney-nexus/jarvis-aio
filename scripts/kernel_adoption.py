@@ -56,6 +56,7 @@ _DECLARED: dict[str, dict] = {
     "priority":     {"stage": "pure",    "owners": []},
     "loop_detect":  {"stage": "pure",    "owners": []},
     "journal":      {"stage": "pure",    "owners": []},
+    "budget":       {"stage": "pure",    "owners": []},
 }
 
 _STAGE_ICON = {"pure": "·", "shadow": "◐", "parity": "◑", "enforce": "●"}

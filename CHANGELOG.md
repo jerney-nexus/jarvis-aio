@@ -1,3 +1,16 @@
+## [8.24.0] — agency budget primitive (MCU audit A3)
+
+Third MCU-audit item (point 21: "a correct system can still produce runaway behavior"). **Additive, pure** — a new kernel primitive; nothing consults it yet, so no runtime change.
+
+- **`kernel/budget.py`** — `AgencyBudget` holds the ceilings JARVIS places on *itself* and answers *"am I allowed one more of this right now?"*:
+  - **rate caps** — autonomous actions/hour and LLM calls/hour, via a sliding window;
+  - **retry cap** — attempts allowed per action;
+  - **delegation-depth cap** — how deep a chain of delegated agents may go;
+  - **concurrency cap** — how many of a kind may be in flight at once.
+- `allow()` is pure (doesn't consume), `record()` counts, `check_and_record()` is the atomic pair; `0` on any limit means unlimited. Pure: no HA import, no I/O, `now` injected — deterministic and advisory (it only reports; the caller decides to defer/drop/alert). This is the rail that pairs with the loop detector before any autonomy is enabled.
+
+Registered in `kernel/__init__` and the adoption matrix (`budget` = pure). 9 new tests. Audit clean; adoption + coverage green; full suite green.
+
 ## [8.23.0] — executable JARVIS Constitution (MCU audit A2)
 
 Second MCU-audit item (point 24: "turn the Constitution's invariants into tests"). **Additive** — tests + a doc section; no runtime change.

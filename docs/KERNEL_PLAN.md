@@ -201,7 +201,7 @@ owner-gated:
 | --- | --- | --- | --- |
 | A1 | Behavioral coverage matrix (path × contract) + CI gate | 🚧 In progress | 8.22.0 |
 | A2 | Executable Constitution (invariant-violation tests) | ✅ Shipped | 8.23.0 |
-| A3 | Agency Budget (rate / retry / delegation-depth caps) | ⬜ | 8.24.0 |
+| A3 | Agency Budget (rate / retry / delegation-depth caps) | ✅ Shipped | 8.24.0 |
 | A4 | Richer authority **parity** inputs (situation/scope/intent/token) — still log-only | ⬜ | 8.25.0 |
 | A5 | Universal `ActuatorRequest` contract + route `control_device` through it (shadow/parity) | ⬜ | 8.26.0 |
 
