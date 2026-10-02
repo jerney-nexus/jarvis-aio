@@ -26,6 +26,7 @@ from . import (
     authority,
     beliefs,
     causal,
+    journal,
     loop_detect,
     plan,
     priority,
@@ -33,6 +34,7 @@ from . import (
     situation,
 )
 from .loop_detect import LoopDetector, LoopVerdict
+from .journal import ExecutionJournal, JournaledStep, RecoveryReport, recover
 from .causal import CausalHypothesis, CausalModel
 from .attention import AttentionContext, AttentionDecision, AttentionRequest, arbitrate
 from .authority import (
@@ -99,4 +101,9 @@ __all__ = [
     "loop_detect",
     "LoopDetector",
     "LoopVerdict",
+    "journal",
+    "ExecutionJournal",
+    "JournaledStep",
+    "RecoveryReport",
+    "recover",
 ]

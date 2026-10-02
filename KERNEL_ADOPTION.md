@@ -41,6 +41,7 @@ holds on the live home system.
 | `correlation` | ◐ shadow | `decision_record`, `observer`, `proactive_audio` |
 | `event` | ◑ parity | `camera`, `observer`, `proactive_audio` |
 | `event_bus` | ◐ shadow | `__init__` |
+| `journal` | · pure | — |
 | `ledger` | ◐ shadow | `__init__` |
 | `loop_detect` | · pure | — |
 | `persistence` | · pure | — |

@@ -180,8 +180,8 @@ deployment; the usable, novel work is tracked here, each as its own release.
 | --- | --- | --- | --- |
 | H1 | Authority: capability expiry/revocation + log-only parity tracker | ✅ Shipped | 8.13.0 |
 | H2 | Kernel-adoption / bypass matrix + JARVIS Constitution + emergency hierarchy | 🚧 In progress | 8.14.0 |
-| H3 | Loop detection (action → event → action) | 🚧 In progress | 8.15.0 |
-| H4 | Execution journal + crash recovery | ⬜ | 8.16.0 |
+| H3 | Loop detection (action → event → action) | ✅ Shipped | 8.15.0 |
+| H4 | Execution journal + crash recovery | 🚧 In progress | 8.16.0 |
 
 Deferred as over-engineered for this deployment (not planned): a full 7-type
 memory-lifecycle taxonomy, a broad logical-persistence API, saga-style
@@ -219,6 +219,20 @@ owner-gated step once parity holds on real traffic.
   and applies a **cooldown** after flagging so the caller can break the cycle
   instead of re-detecting it. No HA import, no wall clock (`now` is passed in),
   so it is deterministic and testable; it reports, it never acts.
+
+### H4 — Execution journal + crash recovery (8.16.0)
+
+- `kernel/journal.py`: an `ExecutionJournal` that writes each plan step's
+  lifecycle (`record_plan` → `start_step` RUNNING → `finish_step` DONE/FAILED/…)
+  durably through `kernel.persistence`, so after a restart `in_flight()` returns
+  exactly the steps that were started but never resolved.
+- `recover(journal, verify=, act=)`: settles each in-flight step by asking live
+  state (injected `verify`) whether it actually completed — verified → DONE,
+  otherwise re-run via the injected `act` or flagged `NEEDS_REPLAY`, honouring
+  idempotency so recovery never double-acts. Injected checks keep it
+  deterministic and HA-free; it runs on a real temp DB in tests.
+
+**This completes the post-migration hardening shortlist (H1–H4).**
 
 ---
 
