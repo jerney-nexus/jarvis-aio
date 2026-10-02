@@ -180,7 +180,7 @@ deployment; the usable, novel work is tracked here, each as its own release.
 | --- | --- | --- | --- |
 | H1 | Authority: capability expiry/revocation + log-only parity tracker | ✅ Shipped | 8.13.0 |
 | H2 | Kernel-adoption / bypass matrix + JARVIS Constitution + emergency hierarchy | 🚧 In progress | 8.14.0 |
-| H3 | Loop detection (action → event → action) | ⬜ | 8.15.0 |
+| H3 | Loop detection (action → event → action) | 🚧 In progress | 8.15.0 |
 | H4 | Execution journal + crash recovery | ⬜ | 8.16.0 |
 
 Deferred as over-engineered for this deployment (not planned): a full 7-type
@@ -210,6 +210,15 @@ owner-gated step once parity holds on real traffic.
   matrix that scans live code for kernel references and compares against the
   declared stage (pure → shadow → parity → enforce). `--check` runs in CI and
   fails on drift — a primitive claimed adopted that nothing live consults.
+
+### H3 — Feedback-loop detection (8.15.0)
+
+- `kernel/loop_detect.py`: a pure `LoopDetector` that spots a thrash loop —
+  either **repetition** (the same action fires too many times inside a sliding
+  window) or a **self-trigger** (A → event → A traced through a cause chain) —
+  and applies a **cooldown** after flagging so the caller can break the cycle
+  instead of re-detecting it. No HA import, no wall clock (`now` is passed in),
+  so it is deterministic and testable; it reports, it never acts.
 
 ---
 

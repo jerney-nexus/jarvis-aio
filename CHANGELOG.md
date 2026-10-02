@@ -1,3 +1,12 @@
+## [8.15.0] — kernel hardening H3: feedback-loop detection
+
+Third post-migration hardening item (docs/KERNEL_PLAN.md → "Post-migration hardening"). **No behaviour change** — a pure primitive, additive.
+
+- **`kernel/loop_detect.py`** — a `LoopDetector` that spots a system chasing its own tail. It flags two shapes: **repetition** (the same action key fires ≥ `max_repeats` inside a sliding `window_s`, the classic flap) and **self-trigger** (an action was caused, through the event cause-chain, by an earlier firing of the *same* action — a true A → event → A cycle). After flagging, it reports a **cooldown** for `cooldown_s` so the caller can break the cycle rather than re-detect it every tick. The causal map is bounded so a long-lived detector never grows without limit.
+- Pure: no Home Assistant import, no I/O, no wall clock (`now` is passed in), so it is deterministic and unit-testable. It only reports (`LoopVerdict`); the caller decides whether to suppress, back off, or alert — and, once wired, how it feeds `attention` / `priority`.
+
+New unit tests (11): single-fire, repetition within/outside window, cooldown hold + expiry, self-trigger via cause chain, unrelated-cause negative, chain-depth bound, reset (per-key + all), and the bounded causal map. Audit clean; adoption check green; full suite green.
+
 ## [8.14.0] — kernel hardening H2: adoption matrix + JARVIS Constitution + emergency hierarchy
 
 Second post-migration hardening item (docs/KERNEL_PLAN.md → "Post-migration hardening"). **No behaviour change** — all additive: new docs, a pure primitive, and a CI guard.
