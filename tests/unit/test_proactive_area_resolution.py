@@ -145,3 +145,65 @@ def test_dispatch_speak_unknown_area_still_drops_without_broadcast(pa, monkeypat
         None, {"message": "x", "target_area": "nonexistent"}))
     # Strict semantics preserved for normal callers: unknown area → dropped.
     assert called["n"] == 0
+
+
+# ── infra-audit announce policy (8.21.0): no nagging, criticals only ──────────
+
+def _verdict(critical, tags=("root storage",), alert=True):
+    return {"alert_required": alert, "critical": critical,
+            "message": "m", "tags": list(tags)}
+
+
+def test_warning_is_not_spoken_by_default(pa):
+    announce, sig = pa._infra_announce_decision(
+        _verdict(False), speak_warnings=False,
+        last_sig=None, last_ts=0.0, now=100.0, cooldown_s=3600.0)
+    assert announce is False and sig[0] == "warn"
+
+
+def test_warning_spoken_when_opted_in(pa):
+    announce, _ = pa._infra_announce_decision(
+        _verdict(False), speak_warnings=True,
+        last_sig=None, last_ts=0.0, now=100.0, cooldown_s=3600.0)
+    assert announce is True
+
+
+def test_critical_spoken_first_time(pa):
+    announce, sig = pa._infra_announce_decision(
+        _verdict(True), speak_warnings=False,
+        last_sig=None, last_ts=0.0, now=100.0, cooldown_s=3600.0)
+    assert announce is True and sig[0] == "critical"
+
+
+def test_same_critical_not_repeated_within_cooldown(pa):
+    sig = ("critical", ("root storage",))
+    announce, _ = pa._infra_announce_decision(
+        _verdict(True), speak_warnings=False,
+        last_sig=sig, last_ts=100.0, now=100.0 + 60, cooldown_s=3600.0)
+    assert announce is False
+
+
+def test_same_critical_repeats_after_cooldown(pa):
+    sig = ("critical", ("root storage",))
+    announce, _ = pa._infra_announce_decision(
+        _verdict(True), speak_warnings=False,
+        last_sig=sig, last_ts=100.0, now=100.0 + 3601, cooldown_s=3600.0)
+    assert announce is True
+
+
+def test_escalation_from_warning_to_critical_speaks_immediately(pa):
+    # Last spoken was a warning (only possible with speak_warnings), now critical
+    # on the same tags → must break through the cooldown.
+    announce, _ = pa._infra_announce_decision(
+        _verdict(True), speak_warnings=False,
+        last_sig=("warn", ("root storage",)), last_ts=100.0,
+        now=100.0 + 60, cooldown_s=3600.0)
+    assert announce is True
+
+
+def test_different_finding_set_speaks(pa):
+    announce, _ = pa._infra_announce_decision(
+        _verdict(True, tags=("system memory",)), speak_warnings=False,
+        last_sig=("critical", ("root storage",)), last_ts=100.0,
+        now=100.0 + 60, cooldown_s=3600.0)
+    assert announce is True

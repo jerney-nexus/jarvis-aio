@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from datetime import timedelta
 
 import voluptuous as vol
@@ -54,6 +55,13 @@ DEFAULT_ANNOUNCE_PLAYER = ""            # optional fallback player when an area 
 MEDIA_DUCK_LEVEL = 0.10                 # spec background-duck floor — see _announce() note
 AUDIT_INTERVAL = timedelta(minutes=15)
 AUDIT_STARTUP_DELAY = timedelta(seconds=60)
+# JARVIS must not nag about infrastructure health. By default only *critical*
+# conditions are spoken (minor/warning findings stay in diagnostics + the fault
+# log), and even a critical one is not repeated until it clears or escalates —
+# otherwise the same unresolved condition is announced every AUDIT_INTERVAL.
+# Set the `infra_audit_speak_warnings` config key true to also speak warnings.
+CONF_INFRA_SPEAK_WARNINGS = "infra_audit_speak_warnings"
+INFRA_ALERT_REPEAT_COOLDOWN = timedelta(hours=6)
 # Where the infrastructure-health audit speaks. Override per-install via the
 # `infra_audit_area` config key (an area id/name/alias). Empty — the default —
 # means "no fixed area": the audit broadcasts house-wide so an infra alert is
@@ -207,6 +215,43 @@ def _audit_speak_target(hass: HomeAssistant) -> dict:
     if configured and _resolve_area_id(hass, configured) is not None:
         return {"target_area": configured}
     return {"target_area": "", "broadcast": True}
+
+
+def _infra_speak_warnings(hass: HomeAssistant) -> bool:
+    """Whether the infra audit should *speak* warning-level findings (not just
+    criticals). Default False — warnings are recorded but not announced, so
+    JARVIS doesn't narrate minor/degraded-visibility health every cycle."""
+    try:
+        from . import jarvis_config
+        return bool(jarvis_config.get(CONF_INFRA_SPEAK_WARNINGS, False))
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _infra_announce_decision(
+    verdict: dict,
+    *,
+    speak_warnings: bool,
+    last_sig,
+    last_ts: float,
+    now: float,
+    cooldown_s: float,
+):
+    """Decide whether an infra-audit verdict should be spoken now.
+
+    Pure policy (so it is unit-testable): speak only critical findings unless
+    ``speak_warnings``; never repeat the same signature within ``cooldown_s``;
+    always allow a fresh critical that escalated from a prior warning. Returns
+    ``(announce: bool, signature)`` — store the signature + ``now`` as the new
+    last-spoken state when ``announce`` is True."""
+    critical = bool(verdict.get("critical"))
+    tags = tuple(sorted(verdict.get("tags", [])))
+    sig = ("critical" if critical else "warn", tags)
+    if not (critical or speak_warnings):
+        return False, sig
+    escalated = critical and last_sig is not None and last_sig[0] != "critical"
+    recently_spoken = sig == last_sig and (now - last_ts) < cooldown_s
+    return (escalated or not recently_spoken), sig
 
 
 @callback
@@ -701,27 +746,50 @@ async def async_setup_proactive_audio(hass: HomeAssistant, entry: ConfigEntry) -
             if verdict["alert_required"]:
                 message = verdict["message"]
                 tags = verdict.get("tags", [])
-                # Recall prior occurrences (file I/O off the event loop) and fold
-                # them into the spoken warning.
-                matches = await hass.async_add_executor_job(
-                    fault_log.query_related_faults, tags
+                critical = bool(verdict["critical"])
+
+                # Decide whether to SPEAK. JARVIS should not narrate minor
+                # (warning-level) infrastructure health, nor re-announce the same
+                # unresolved condition every cycle. By default only criticals are
+                # spoken; a given alert is not repeated until it clears or
+                # escalates (warning→critical), within a cooldown window.
+                now = time.monotonic()
+                announce, sig = _infra_announce_decision(
+                    verdict,
+                    speak_warnings=_infra_speak_warnings(hass),
+                    last_sig=entry_data.get("_infra_last_sig"),
+                    last_ts=entry_data.get("_infra_last_spoken_ts", 0.0),
+                    now=now,
+                    cooldown_s=INFRA_ALERT_REPEAT_COOLDOWN.total_seconds(),
                 )
-                if matches:
-                    message += _history_phrase(matches, honorific)
-                _LOGGER.info("Infrastructure audit: %s", message)
-                speak_data = _audit_speak_target(hass)
-                speak_data["message"] = message
-                speak_data["critical"] = verdict["critical"]
-                await hass.services.async_call(
-                    DOMAIN,
-                    SERVICE_SPEAK,
-                    speak_data,
-                    blocking=False,
-                )
-                # Persist this occurrence for future recall.
-                await hass.async_add_executor_job(
-                    fault_log.commit_event, verdict["message"], tags
-                )
+
+                if announce:
+                    # Recall prior occurrences (file I/O off the loop) and fold
+                    # them into the spoken warning.
+                    matches = await hass.async_add_executor_job(
+                        fault_log.query_related_faults, tags
+                    )
+                    spoken = message + (_history_phrase(matches, honorific) if matches else "")
+                    _LOGGER.info("Infrastructure audit (announced): %s", spoken)
+                    speak_data = _audit_speak_target(hass)
+                    speak_data["message"] = spoken
+                    speak_data["critical"] = critical
+                    await hass.services.async_call(
+                        DOMAIN, SERVICE_SPEAK, speak_data, blocking=False,
+                    )
+                    entry_data["_infra_last_sig"] = sig
+                    entry_data["_infra_last_spoken_ts"] = now
+                    # Persist this occurrence for future recall (only on announce,
+                    # so the fault log isn't appended every quiet cycle).
+                    await hass.async_add_executor_job(
+                        fault_log.commit_event, verdict["message"], tags
+                    )
+                else:
+                    _LOGGER.debug(
+                        "Infrastructure audit (not announced — %s): %s",
+                        "critical cooldown" if critical else "warning below speak threshold",
+                        message,
+                    )
 
             # Habit modelling: sample occupancy and surface likely upcoming actions.
             await _run_predictor(hass, predictor)

@@ -1,3 +1,18 @@
+## [8.21.0] — fix: JARVIS no longer nags about minor infrastructure health
+
+Stops the continual spoken announcements of minor infrastructure issues every audit cycle.
+
+Two things combined to make this loud: the 15-minute infrastructure audit marks **any warning-level finding** as alert-worthy — including "I can't read *X*" for probe sensors a given install doesn't have (`sensor.server_root_storage_usage`, the core-switch/freeze sensors, etc.) — and it re-announced the same verdict **every cycle**. 8.19.0 then (correctly) stopped these being silently dropped to a non-existent area, which made the nagging audible for the first time.
+
+The audit's **spoken** policy is now:
+
+- **Criticals only, by default.** Warning-level findings (degraded visibility, a sensor that isn't present, an elevated-but-not-critical reading) are still recorded in diagnostics and the fault log, but **not spoken**. Set the `infra_audit_speak_warnings` config key `true` to restore speaking warnings.
+- **No repeats.** The same finding set is not re-announced within a 6-hour cooldown; it speaks again only when it **clears and returns**, **escalates** (warning→critical), or the set of findings changes. The fault log is appended only when something is actually announced, not every quiet cycle.
+
+The decision is a pure, unit-tested helper (`_infra_announce_decision`); `InfrastructureTriage.evaluate()` semantics are unchanged, so diagnostics still see every finding. 7 new tests. Full suite green.
+
+> On "**not in his voice**": the proactive TTS entity defaults to `tts.piper` and is overridable via the `proactive_tts_entity` config key — set it to your JARVIS/Piper voice entity. With this release the minor-health announcements stop regardless, so JARVIS stays quiet unless something is genuinely critical. (The config diagnostics also show the **LLM backend "off" — no base URL configured**; if you expect JARVIS to use an LLM, that's a credentials/setup item, not a code issue.)
+
 ## [8.20.0] — fix: "database is locked" on the conversation store
 
 Repairs the log errors *"conversation DB connect/schema failed: database is locked"* (database.py:71) and *"JARVIS activity log read error: database is locked"* (database.py:224).
