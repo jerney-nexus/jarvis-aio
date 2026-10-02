@@ -502,6 +502,35 @@ def _group_debounced(entity_id: str, interval: float) -> bool:
 
 
 @callback
+def _state_changed_handler(event: Event) -> None:
+    """The registered ``state_changed`` listener: shadow-publish the event + run
+    the real handler inside a correlation scope (kernel Phase 1). Best-effort —
+    the publish/scope can never break the authoritative handler, and asyncio
+    copies the correlation id into any task the handler spawns, so downstream
+    decisions link to this event.
+
+    Must be a ``@callback`` so HA runs it on the event loop. Without it a plain
+    listener is dispatched to an executor thread, and the
+    ``async_create_task(_process_event(...))`` in ``_on_state_changed`` would then
+    be called off-loop — tripping HA's thread-safety guard and leaving the
+    coroutine never awaited (HA 2026.x). Everything it calls is non-blocking, so
+    loop execution is correct."""
+    cid = getattr(getattr(event, "context", None), "id", None)
+    try:
+        from .events import publish as _publish_event
+        from .kernel import correlation, from_state_changed
+    except Exception:
+        _on_state_changed(event)
+        return
+    with correlation.scope(cid):
+        try:
+            _publish_event(_STATE.hass, from_state_changed(event))
+        except Exception:
+            pass
+        _on_state_changed(event)
+
+
+@callback
 def _on_state_changed(event: Event) -> None:
     """Non-blocking HA event handler."""
     if not _STATE.running:
@@ -1050,25 +1079,6 @@ async def start(hass: HomeAssistant, config: dict) -> None:
         return
 
     _STATE.running = True
-
-    def _state_changed_handler(event: Event) -> None:
-        """Shadow-publish the event + run the real handler inside a correlation
-        scope (kernel Phase 1). Best-effort: the publish/scope can never break the
-        authoritative handler, and asyncio copies the correlation id into any
-        task the handler spawns, so downstream decisions link to this event."""
-        cid = getattr(getattr(event, "context", None), "id", None)
-        try:
-            from .events import publish as _publish_event
-            from .kernel import correlation, from_state_changed
-        except Exception:
-            _on_state_changed(event)
-            return
-        with correlation.scope(cid):
-            try:
-                _publish_event(_STATE.hass, from_state_changed(event))
-            except Exception:
-                pass
-            _on_state_changed(event)
 
     _STATE.unsub = hass.bus.async_listen("state_changed", _state_changed_handler)
     _LOGGER.info(

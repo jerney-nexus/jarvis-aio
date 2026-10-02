@@ -51,6 +51,9 @@ def _install_ha_stubs() -> None:
             self.data = data or {}
 
     def callback(func):
+        # Mirror HA: tag the function so is_callback()/thread-safety checks can
+        # tell a loop-safe listener from one HA would dispatch to an executor.
+        func._hass_callback = True
         return func
 
     core.HomeAssistant = HomeAssistant
