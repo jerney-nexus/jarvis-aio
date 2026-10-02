@@ -466,3 +466,22 @@ async def test_announce_done_suppresses_oven_and_untrusted_guess(
         "sensor.unknown_power", "Unknown", monitor.ApplianceType.WASHER,
         discovery_method="fingerprint:500W")
     await monitor._announce_done(guessed, "washer")
+
+
+def test_status_reports_native_trigger_states(monitor):
+    """Regression: _NativeAppliance has `trigger_states` (frozenset), not
+    `trigger_state`. status() must not raise AttributeError and must expose the
+    set (previously crashed appliance-monitor startup — '_NativeAppliance' object
+    has no attribute 'trigger_state')."""
+    monitor._MON.natives["binary_sensor.washer_run_completed"] = monitor._NativeAppliance(
+        entity_id="binary_sensor.washer_run_completed",
+        device_name="Laundry Washer",
+        appliance=monitor.ApplianceType.WASHER,
+        trigger_states=frozenset({"on", "finished"}),
+        last_state="off",
+    )
+    st = monitor.status()  # must not raise
+    native = st["native_appliances"]["binary_sensor.washer_run_completed"]
+    assert native["trigger_states"] == ["finished", "on"]  # sorted
+    assert native["current_state"] == "off"
+    assert "trigger_state" not in native  # the broken singular key is gone

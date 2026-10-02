@@ -1345,7 +1345,8 @@ async def start(hass: HomeAssistant, config: dict) -> None:
     for n in _MON.natives.values():
         _LOGGER.info(
             "  • [native] %s → %s (trigger='%s', device='%s')",
-            n.entity_id, n.appliance.label, n.trigger_state, n.device_name,
+            n.entity_id, n.appliance.label,
+            "|".join(sorted(n.trigger_states)), n.device_name,
         )
     if _MON.delta:
         _LOGGER.info(
@@ -1405,7 +1406,7 @@ def status() -> dict:
             eid: {
                 "appliance": n.appliance.label,
                 "device_name": n.device_name,
-                "trigger_state": n.trigger_state,
+                "trigger_states": sorted(n.trigger_states),
                 "current_state": n.last_state,
                 "announced": n.announced,
             }
