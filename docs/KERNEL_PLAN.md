@@ -178,8 +178,8 @@ deployment; the usable, novel work is tracked here, each as its own release.
 
 | # | Hardening item | Status | Release |
 | --- | --- | --- | --- |
-| H1 | Authority: capability expiry/revocation + log-only parity tracker | 🚧 In progress | 8.13.0 |
-| H2 | Kernel-adoption / bypass matrix + JARVIS Constitution + emergency hierarchy | ⬜ | 8.14.0 |
+| H1 | Authority: capability expiry/revocation + log-only parity tracker | ✅ Shipped | 8.13.0 |
+| H2 | Kernel-adoption / bypass matrix + JARVIS Constitution + emergency hierarchy | 🚧 In progress | 8.14.0 |
 | H3 | Loop detection (action → event → action) | ⬜ | 8.15.0 |
 | H4 | Execution journal + crash recovery | ⬜ | 8.16.0 |
 
@@ -196,6 +196,20 @@ owner-gated step once parity holds on real traffic.
   parent's (a child never outlives its issuer).
 - `AuthorityParity`: a log-only tracker comparing the engine's decision to the
   actual behaviour, so enforcement is flipped on only once parity holds.
+
+### H2 — Adoption visibility + invariants (8.14.0)
+
+- `kernel/priority.py`: the emergency/priority ladder (life safety → security →
+  property → household → convenience → personality) as one pure comparison, with
+  the invariant *personality never overrides a safety concern* encoded in
+  `may_override`.
+- `docs/JARVIS_CONSTITUTION.md`: the short, stable set of inviolable invariants
+  (precedence, authority is log-only + owner-gated, fail-safe defaults, additive
+  change discipline).
+- `KERNEL_ADOPTION.md` + `scripts/kernel_adoption.py`: a living adoption/bypass
+  matrix that scans live code for kernel references and compares against the
+  declared stage (pure → shadow → parity → enforce). `--check` runs in CI and
+  fails on drift — a primitive claimed adopted that nothing live consults.
 
 ---
 
