@@ -18,6 +18,7 @@ panel. Everything here is defensive and never raises to the caller.
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
 import os
 import time
@@ -45,6 +46,76 @@ _last_decision_id: Optional[int] = None  # decision_record row id of the latest 
 _decision_generation = 0
 _pending_decision_generations: set[int] = set()
 _dismissed_decision_generations: set[int] = set()
+
+# ── Kernel situation mirror (Phase 3, SHADOW MODE) ──────────────────────────────
+# The intrusion lifecycle is mirrored into kernel.situation ALONGSIDE the existing
+# authoritative path, so the generalised state machine can be proven to track the
+# same episodes before anything flips onto it. Entirely best-effort: a mirror
+# failure never affects intrusion handling. Lifecycle mapping:
+#   investigating → open + INVESTIGATING   confirmed  → CONFIRMED
+#   unresolved    → RESOLVED               dismissed  → BENIGN → RESOLVED
+_situation_mgr = None            # lazily-built kernel.SituationManager
+_situation_id: Optional[str] = None   # the current open intrusion situation, if any
+
+
+def _get_situation_manager(hass):
+    global _situation_mgr
+    if _situation_mgr is None:
+        from .kernel import SituationManager
+        _situation_mgr = SituationManager(
+            config_path_str("jarvis", "situations.db", hass=hass))
+    return _situation_mgr
+
+
+def _mirror_situation_sync(hass, action: str, *, reason: str = "",
+                           breach_area: Optional[str] = None,
+                           camera: Optional[str] = None) -> None:
+    """Mirror one intrusion lifecycle event into kernel.situation.
+
+    SYNC — run via the executor (it does SQLite I/O). Best-effort: never raises
+    into the caller. Tracks the current episode in ``_situation_id``.
+    """
+    global _situation_id
+    try:
+        from .kernel import situation as S
+        mgr = _get_situation_manager(hass)
+        cur = mgr.get(_situation_id) if _situation_id else None
+
+        if action == "investigating":
+            if cur is None or cur.terminal:
+                sit = mgr.open("intrusion", subject=(breach_area or camera),
+                               location=breach_area, data={"reason": reason})
+                _situation_id = sit.id
+                mgr.transition(sit.id, S.INVESTIGATING, reason=reason or "investigating")
+            elif cur.state == S.POSSIBLE:
+                mgr.transition(cur.id, S.INVESTIGATING, reason=reason or "investigating")
+            # already INVESTIGATING/CONFIRMED → nothing to do
+
+        elif action == "confirmed":
+            if cur is None or cur.terminal:
+                sit = mgr.open("intrusion", subject=(breach_area or camera),
+                               location=breach_area)
+                _situation_id = sit.id
+                cur = mgr.transition(sit.id, S.INVESTIGATING, reason="confirmed")
+            if cur.state == S.POSSIBLE:
+                cur = mgr.transition(cur.id, S.INVESTIGATING, reason="confirmed")
+            if cur.state == S.INVESTIGATING:
+                mgr.transition(cur.id, S.CONFIRMED, reason=reason or "confirmed")
+
+        elif action == "unresolved":
+            if cur is not None and not cur.terminal:
+                mgr.transition(cur.id, S.RESOLVED, reason=reason or "unresolved")
+            _situation_id = None
+
+        elif action == "dismissed":
+            if cur is not None and not cur.terminal:
+                if cur.state in (S.POSSIBLE, S.INVESTIGATING, S.CONFIRMED):
+                    cur = mgr.transition(cur.id, S.BENIGN, reason=reason or "false alarm")
+                if not cur.terminal:
+                    mgr.transition(cur.id, S.RESOLVED, reason="false alarm")
+            _situation_id = None
+    except Exception as exc:
+        _LOGGER.debug("intrusion: situation mirror failed (%s): %s", action, exc)
 
 
 def begin_decision_generation() -> int:
@@ -247,6 +318,13 @@ async def async_dismiss_intrusion(hass, reason: str = "") -> dict:
     except asyncio.CancelledError:
         await asyncio.shield(persist_task)
         raise
+    # Shadow: resolve the mirrored situation as a false alarm — AFTER the shielded
+    # persist so it never changes the critical path's cancellation semantics.
+    try:
+        await hass.async_add_executor_job(functools.partial(
+            _mirror_situation_sync, hass, "dismissed", reason=reason))
+    except Exception:
+        pass
     return result
 
 
@@ -391,6 +469,15 @@ async def async_record_event(hass, kind: str, **kwargs) -> dict:
     await async_load(hass)
     ev = record_event(kind, save=False, **kwargs)
     await _async_persist(hass)
+    # Shadow: mirror the lifecycle into kernel.situation, off-loop, best-effort.
+    try:
+        await hass.async_add_executor_job(functools.partial(
+            _mirror_situation_sync, hass, kind,
+            reason=kwargs.get("reason", "") or "",
+            breach_area=kwargs.get("breach_area"),
+            camera=kwargs.get("camera")))
+    except Exception:
+        pass
     return ev
 
 

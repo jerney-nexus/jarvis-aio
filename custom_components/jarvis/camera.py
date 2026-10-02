@@ -1444,9 +1444,16 @@ def _nest_device_to_camera(hass: HomeAssistant, nest_device_id: str) -> Optional
         ent_reg = er.async_get(hass)
         dev_reg = dr.async_get(hass)
 
-        # Find the HA device whose identifiers contain the nest_device_id
+        # Find the HA device whose identifiers contain the nest_device_id.
+        # HA 2026.08+ deprecated using DeviceRegistry.devices as a mapping
+        # (.values()/.get()/membership), removed in 2027.9; iterating the
+        # registry directly is the supported replacement and yields DeviceEntry.
+        # Normalise defensively so this still works on older cores whose
+        # iteration yields device ids instead of entries.
         target_device_id: Optional[str] = None
-        for device in dev_reg.devices.values():
+        for device in dev_reg.devices:
+            if isinstance(device, str):
+                device = dev_reg.devices[device]
             for identifier_tuple in device.identifiers:
                 # identifier_tuple is (domain, identifier_str)
                 if len(identifier_tuple) >= 2 and nest_device_id in str(identifier_tuple[1]):

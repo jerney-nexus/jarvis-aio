@@ -13,14 +13,14 @@ JARVIS stays shippable throughout.
 | --- | --- | --- |
 | 0 — Foundations & guardrails | ✅ Shipped | 8.4.3 (HA lifecycle tests + CI gate), 8.5.0 (`JarvisEvent` + persistence seam) |
 | 1 — Event bus + correlated ledger | ✅ Shipped | 8.6.0 |
-| 2 — World-model facade | 🚧 In progress | 8.7.0 |
-| 3 — Situation manager | ⬜ Not started | 8.8.0 |
-| 4 — Authority / capability engine | ⬜ Not started | 8.9.0 |
-| 5 — Planner → Executor → Verifier | ⬜ Not started | 8.10.0 |
-| 6 — Beliefs · Attention · Model Router | ⬜ Not started | 8.11.0 |
-| 7 — Causal learning | ⬜ Not started | 8.12.0 |
+| 2 — World-model facade | ✅ Shipped | 8.7.0 |
+| 3 — Situation manager | ✅ Shipped | 8.8.0 (machine), 8.8.1 (intrusion shadow) |
+| 4 — Authority / capability engine | 🚧 In progress | 8.9.0 |
+| 5 — Planner → Executor → Verifier | 🚧 In progress | 8.10.0 |
+| 6 — Beliefs · Attention · Model Router | 🚧 In progress | 8.11.0 |
+| 7 — Causal learning | 🚧 In progress | 8.12.0 |
 
-_Kept current as each phase merges._
+_Kept current as each phase merges._ **All phase primitives (0–7) are now shipped additively** (shadow / parity / opt-in); 🚧 marks phases whose remaining work is wiring the existing consumers to enforce the new primitive (tracked in each phase's section).
 
 The audit's own conclusion is the premise here: the gap is **consolidation, not
 features**. Most of the "missing" pieces already exist as strong but parallel
@@ -99,7 +99,7 @@ later phase debuggable. Risk: low (shadow-only). Guard: no behavior change.
 
 ## Phase 2 — World-model facade
 
-Target release: **8.7.0** — **🚧 In progress** (`kernel/world_model.py` read facade + parity tests).
+Target release: **8.7.0** — **✅ Shipped** (`kernel/world_model.py` read facade + parity tests).
 
 - `kernel/world_model.py`: a **read facade** over HA state + the knowledge graph +
   identity + scene memory, answering in canonical terms (people / rooms / devices
@@ -110,7 +110,7 @@ Risk: low (read-only). Guard: per-caller opt-in; parity test vs. direct HA reads
 
 ## Phase 3 — Situation manager
 
-Target release: **8.8.0**
+Target release: **8.8.0** — **✅ Shipped** (durable `kernel/situation.py` machine in 8.8.0; `intrusion` adopted it in shadow mode in 8.8.1, running parallel to the authoritative path until verdicts match).
 
 - `kernel/situation.py`: generalize `intrusion.py`'s state machine into durable,
   correlated situations (normal → possible → investigating → confirmed/benign →
@@ -122,7 +122,7 @@ verdicts match on recorded history.
 
 ## Phase 4 — Authority / capability engine (the safety keystone)
 
-Target release: **8.9.0**
+Target release: **8.9.0** — **🚧 In progress** (pure `kernel/authority.py` engine + capability tokens shipped in 8.9.0; `voice_confirm`/`output_gate`/autonomy delegating in log-only parity mode, then enforce, to follow).
 
 - `kernel/authority.py`: one capability check (capability, identity, context,
   situation, confidence, time, intent, scope). `voice_confirm` / `output_gate` /
@@ -136,7 +136,7 @@ parity log + the invariant tests.
 
 ## Phase 5 — Planner → Executor → Verifier
 
-Target release: **8.10.0**
+Target release: **8.10.0** — **🚧 In progress** (pure `kernel/plan.py` plan/step objects + executor/verifier with idempotency shipped in 8.10.0; `goals`/agent adoption to follow).
 
 - Formalize `goals.py` + agent execution into explicit plan objects with
   preconditions, postcondition verification, and `idempotency_key`.
@@ -147,7 +147,7 @@ tests.
 
 ## Phase 6 — Beliefs · Attention · Model Router
 
-Target release: **8.11.0**
+Target release: **8.11.0** — **🚧 In progress** (pure `kernel/beliefs.py`, `kernel/attention.py`, `kernel/router.py` shipped in 8.11.0; callers delegate to them, parity-checked, to follow. Router lives in `kernel/` to share the kernel test harness.)
 
 - `kernel/beliefs.py`: probabilistic beliefs (evidence, source, decay,
   contradiction) seeded from knowledge confidence.
@@ -160,12 +160,42 @@ Risk: medium. Guard: attention parity vs. current gate decisions.
 
 ## Phase 7 — Causal learning
 
-Target release: **8.12.0**
+Target release: **8.12.0** — **🚧 In progress** (pure `kernel/causal.py` ΔP-based causal model shipped in 8.12.0; `pattern_analyzer`/`rca`/`feedback` adoption to follow).
 
 - Extend `pattern_analyzer` + `rca` + `feedback` toward
   observation → hypothesis → action → outcome → causal confidence.
 
 Risk: medium; isolated to the learning layer.
+
+---
+
+## Post-migration hardening (external audit follow-up)
+
+After Phases 0–7 shipped the kernel primitives, an external architecture audit
+(ChatGPT; `docs` upload) was reviewed against the codebase. ~40% of it was
+already shipped and a few items were over-engineered for a single-home
+deployment; the usable, novel work is tracked here, each as its own release.
+
+| # | Hardening item | Status | Release |
+| --- | --- | --- | --- |
+| H1 | Authority: capability expiry/revocation + log-only parity tracker | 🚧 In progress | 8.13.0 |
+| H2 | Kernel-adoption / bypass matrix + JARVIS Constitution + emergency hierarchy | ⬜ | 8.14.0 |
+| H3 | Loop detection (action → event → action) | ⬜ | 8.15.0 |
+| H4 | Execution journal + crash recovery | ⬜ | 8.16.0 |
+
+Deferred as over-engineered for this deployment (not planned): a full 7-type
+memory-lifecycle taxonomy, a broad logical-persistence API, saga-style
+compensation beyond verify+idempotency, and a full event replay/simulation
+subsystem. Hard authority *enforcement* (flipping parity → deny) is a separate,
+owner-gated step once parity holds on real traffic.
+
+### H1 — Authority hardening (8.13.0)
+
+- `CapabilityToken` gains `expires_at` + `token_id`; `authorize` denies an
+  expired or revoked token; `derive(..., ttl=)` clamps a child's expiry to its
+  parent's (a child never outlives its issuer).
+- `AuthorityParity`: a log-only tracker comparing the engine's decision to the
+  actual behaviour, so enforcement is flipped on only once parity holds.
 
 ---
 

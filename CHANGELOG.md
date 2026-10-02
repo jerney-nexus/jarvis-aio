@@ -1,3 +1,80 @@
+## [8.13.0] — kernel hardening H1: authority enforcement (log-only) + token expiry/revocation
+
+First of the post-migration hardening items from the architecture-audit review (docs/KERNEL_PLAN.md → "Post-migration hardening"). **No behaviour change** — authority runs in **log-only parity mode**; nothing is blocked that wasn't already.
+
+- **Capability expiry + revocation** — `CapabilityToken` gains `expires_at` and a `token_id`; `authorize()` now denies an **expired** or **revoked** token (by id). `derive(..., ttl=)` clamps a child token's expiry to its parent's, so a delegated token never outlives its issuer.
+- **`AuthorityParity`** — a log-only tracker that compares the authority engine's decision to what actually happened (ALLOW / DENY / CONFIRM), tallying agreement per capability with recent mismatches. This is the evidence needed before enforcement is ever flipped from parity to deny.
+- **Actuator wiring (log-only)** — `agent._exec_control_device` now records engine-vs-gate parity through `authority_bridge` right where `policy.confirm_gate` already decides. It never changes the gate's outcome; the tally lives in `hass.data` and is exposed via `authority_bridge.parity_summary()`.
+
+New unit tests (11: 6 authority expiry/revocation/parity + 5 bridge). Audit clean; full suite green. Flipping authority to actually enforce remains a separate, owner-gated step once parity holds on real traffic.
+
+## [8.12.0] — kernel Phase 7: causal learning (final phase)
+
+Phase 7 of the kernel plan (docs/KERNEL_PLAN.md) — the last one. Gives `pattern_analyzer` / `rca` / `feedback` a shared, principled measure of *whether a cause actually drives an effect*, closing the loop observation → hypothesis → action → outcome → **causal confidence**. **Additive and pure**: ships now; the learning modules adopt it later, so there is no behaviour change.
+
+- **`kernel/causal.py`** — each `CausalHypothesis` "C → E" accumulates a 2×2 contingency (cause present/absent × effect present/absent) and scores causal strength with **ΔP**, the causal contrast `P(E|C) − P(E|¬C)` — which, unlike raw co-occurrence, discounts an effect that happens just as often without the cause (so `prevents` reads negative, no-relationship reads ~0). Confidence shrinks ΔP toward 0 on small samples (≈5 balanced trials → half strength) and is 0 until the cause has been seen both present and absent. `CausalModel` tallies hypotheses and `ranked()` surfaces the strongest.
+- Pure (no HA import, no I/O; immutable hypotheses), so it's deterministic and testable, and seedable from the existing learning signals.
+
+New unit tests (8): perfect/absent/preventive causes, small-sample shrinkage, undefined-until-both-sides, contingency accumulation, and ranking. Audit clean (126 modules); full suite green.
+
+**This completes the staged kernel migration (Phases 0–7).** Each phase shipped its primitive additively (shadow / parity / opt-in); wiring the remaining consumers to enforce is tracked per-phase in the plan.
+
+## [8.11.0] — kernel Phase 6: beliefs · attention · model router
+
+Phase 6 of the kernel plan (docs/KERNEL_PLAN.md): three pure primitives that formalise judgement JARVIS makes ad hoc today. **Additive**: nothing is routed through them yet, so there is no behaviour or settings change.
+
+- **`kernel/beliefs.py`** — probabilistic beliefs via log-odds pooling: a `Belief` holds a proposition's probability backed by `Evidence` (source, supports/refutes, weight), combines independent evidence sensibly (probability stays in (0,1)), applies optional **time decay** toward 0.5 without ever flipping past it, and surfaces **contradiction** (evidence on both sides) with a 0..1 strength. Seedable from the knowledge store's flat confidences.
+- **`kernel/attention.py`** — centralised interruption arbitration (the job split across `output_gate` + the adaptive budget): `arbitrate(request, context)` → **ALLOW / DEFER / SUPPRESS**. CRITICAL overrides quiet-hours/shush/budget (but a genuine duplicate is still suppressed); shush/duplicate suppress non-critical; quiet-hours / exhausted budget / too-many-recent defer the lower tiers.
+- **`kernel/router.py`** — local-first model/provider routing: `route(requirements, providers)` picks the best eligible provider by capability, privacy (any / prefer-local / local-only), latency cap, cost cap and min-quality, preferring local when it clears the bar.
+
+All three are pure (no HA import, no I/O — live state is injected), so each can be parity-checked against the current gate/provider logic before anything delegates to it. New unit tests (26). Audit clean (125 modules); full suite green.
+
+## [8.10.0] — kernel Phase 5: planner → executor → verifier
+
+Phase 5 of the kernel plan (docs/KERNEL_PLAN.md): formalises what `goals.py` + the agent do ad hoc into explicit plan objects with preconditions, **postcondition verification as a first-class step** (verify-after-act, not a bolt-on), and an `idempotency_key` so a retried or replayed plan never double-acts. **Additive and pure**: ships now; `goals`/agent adoption follows, so there is no behaviour change.
+
+- **`kernel/plan.py`** — `Plan` / `Step` objects and `execute_plan(plan, run_step=, check=, completed=)`. Per step it: skips any step whose `idempotency_key` is already completed; gates on **preconditions**; runs the action; then **verifies postconditions**, retrying the action once (mirroring the existing `_verify_control`). It stops at the first `BLOCKED` / `FAILED` / `VERIFY_FAILED` step and reports `ok=False`, and records each succeeded step's idempotency key so a re-run no-ops what already took hold.
+- Pure by construction — the side-effecting parts (perform a step, evaluate a condition against live state, know which keys ran) are **injected** callables, so the orchestration is deterministic and unit-testable; a raising condition check counts as unmet (safe). `PlanReport.to_dict()` is serialisable for the Phase 1 trail.
+
+New unit tests (9): happy path, precondition-blocks, action-failure, postcondition retry-then-succeed and never-holds, idempotency skip + key recording, raising-check safety, and report serialisation. Audit clean (122 modules); full suite green.
+
+## [8.9.0] — kernel Phase 4: authority / capability engine (the safety keystone)
+
+Phase 4 of the kernel plan (docs/KERNEL_PLAN.md): one place that answers "may this capability be exercised, by this actor, in this context?" — the judgement today spread across `voice_confirm`, `output_gate` and the autonomy grants. **Additive and pure**: the engine ships now; no actuator is routed through it yet, so there is no behaviour or settings change. Per the plan's high-risk guard, it is built to run **log-only / allow-as-before** first (prove it reaches the same allow/deny as today on real traffic) before anything enforces it.
+
+- **`kernel/authority.py`** — `authorize(request)` resolves to **ALLOW / DENY / CONFIRM** from `(capability, identity, actor, token, context, situation, confidence, intent, scope)`. Capabilities are classified by sensitivity (safe / sensitive / security), with **unknown capabilities treated as sensitive** so an unrecognised actuation is never silently allowed.
+- **Capability tokens** — a delegated sub-agent (FRIDAY / HOMER) carries a `CapabilityToken`; a token-bearing actor is **denied** any capability its token doesn't grant, and `derive()` can only **narrow** a parent token (intersection), so delegation can never escalate.
+- **Security-sensitive capabilities require explicit authority** — they resolve to CONFIRM (or DENY without an identified requester), never a silent allow — and the engine **fails closed** (DENY) on any policy error.
+
+New unit tests (15) across sensitivity classification, the default policy, token non-escalation/derivation, and fail-closed behaviour. Audit clean (121 modules); full suite green.
+
+## [8.8.1] — kernel Phase 3: intrusion adopts the situation machine (shadow)
+
+Completes Phase 3 by wiring `intrusion` as the first consumer of the `kernel.situation` machine (added in 8.8.0), running **in shadow mode** alongside the existing authoritative path. The intrusion lifecycle is mirrored into a durable situation so the generalised machine can be proven to track the same episodes before anything flips onto it. **No behaviour change** — the mirror is entirely best-effort and never affects intrusion handling.
+
+- `intrusion.async_record_event` and `async_dismiss_intrusion` now mirror each lifecycle event into a `SituationManager`, off the event loop: `investigating → open + INVESTIGATING`, `confirmed → CONFIRMED`, `unresolved → RESOLVED`, dismissal → `BENIGN → RESOLVED`. A new episode opens on the next `investigating` after one resolves.
+- The mirror is wired **after** the dismissal's shielded decision-record persist, so it can't change the critical path's cancellation semantics, and a mirror failure is swallowed.
+
+New unit tests (8) covering the full episode mappings, idempotent re-entry, new-episode-after-resolution, and failure isolation. Audit clean (120 modules); full suite green.
+
+## [8.8.0] — kernel Phase 3: durable situation state machine
+
+Phase 3 of the kernel plan (docs/KERNEL_PLAN.md): generalises the ad-hoc intrusion state machine (scattered across `intrusion.py` and the SafetyManager) into one reusable, durable, correlated **situation** lifecycle that any flow — intrusion first, delivery and hazards later — can drive. **Additive and opt-in**: the machine ships now; no existing flow is migrated onto it yet, so there is no behaviour or settings change.
+
+- **`kernel/situation.py`** — a pure, validated lifecycle: `normal → possible → investigating → confirmed/benign → response → resolved`, with every active state able to reach `resolved` so a situation is never stuck. `can_transition` / `is_terminal` and the transition table are pure and fully tested; an illegal move raises `InvalidTransition` rather than silently corrupting state.
+- **`Situation`** is an immutable record whose `stepped()` returns a new value with an append-only transition history (`from`/`to`/`ts`/`reason`/`event_id`), carrying a `correlation_id` so a situation links into the Phase 1 event→decision trail.
+- **`SituationManager`** persists each situation and its history through the `kernel.persistence` seam (its own SQLite file), so an open situation survives a restart; `open()` / `transition()` / `resolve()` / `open_situations()` drive and query it. Writes are synchronous (situations are low-frequency) — event-loop callers use an executor.
+
+Next increment: `intrusion` adopts the machine as the first consumer, running alongside the existing path (shadow) until recorded verdicts match, then flips — kept out of this release so the SafetyManager authoritative path is migrated carefully.
+
+New unit tests (24) across the transition table, `Situation` value semantics, and the durable manager. Audit clean (120 modules); full suite green.
+
+## [8.7.1] — fix: stop using the deprecated DeviceRegistry.devices mapping
+
+Home Assistant 2026.08 deprecated accessing `device_registry.devices` as a mapping (`.values()`, `.get()`, membership, subscription), with removal in **HA 2027.9**. `camera._nest_device_to_camera` iterated `dev_reg.devices.values()` to map a Nest device id to its camera entity, which would have broken on that release (flagged by the Home Assistant Breakage Radar).
+
+It now iterates the registry directly (`for device in dev_reg.devices`), the supported replacement that yields `DeviceEntry` on current cores, with a defensive fallback for older cores whose iteration yields ids — so behaviour is identical today and future-proof for 2027.9. Added focused tests covering both iteration styles and the no-match paths.
+
 ## [8.7.0] — kernel Phase 2: world-model read facade
 
 Phase 2 of the kernel plan (docs/KERNEL_PLAN.md): a single **read-only** view over the facts JARVIS already has, answered in canonical terms. **Additive and opt-in** — nothing is migrated onto it yet, so there is no behaviour or settings change; reasoning paths will adopt it one caller at a time in later work.
