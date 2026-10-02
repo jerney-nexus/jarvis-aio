@@ -1,3 +1,12 @@
+## [8.5.0] — kernel foundation: canonical event type + unified DB access seam
+
+The first additive layer of the staged kernel architecture (docs/KERNEL_PLAN.md, Phase 0). **Nothing is wired to this yet** — no behaviour, settings, or stored-data change — it is pure, tested scaffolding that the rest of the integration will migrate onto one caller at a time in later phases.
+
+- **Canonical `JarvisEvent`** (`kernel/event.py`). One immutable, serialisable record for "something happened" — a state change, a camera analysis, a voice turn — with `type, source, subject, location, data, confidence, importance, causality, correlation_id, id, ts`. Ships with duck-typed adapters (`from_state_changed`, `from_camera_analysis`, `from_voice_turn`) that normalise common sources into it, plus `to_dict`/`from_dict` and frozen-safe derivation helpers (`evolve`, `caused_by`, `with_correlation`). No Home Assistant import, so it is trivially testable. This is the record Phase 1's event bus will publish in shadow mode.
+- **Unified SQLite access seam** (`kernel/persistence.py`). One canonical connection opener (`ClosingConnection` factory + a sane busy-timeout), an explicit `transaction()` context manager whose rollback also undoes DDL (so a half-applied migration can't be left behind), and an idempotent `run_migrations()` / `schema_version()` pair that sequences and records migrations in a tiny version table. **No schema merge** — each store keeps its own database and tables; this only removes the drift in how connections are opened and gives migrations a home.
+
+Both land with focused unit tests (16 new). The full suite and the real-HA integration tests remain green.
+
 ## [8.4.3] — reliability: importability under partial environments + no leaked log-writer thread
 
 Two correctness fixes surfaced while standing up real Home Assistant lifecycle tests (setup / reload / unload against an actual `hass`), plus the test harness itself. No settings or behaviour change.
