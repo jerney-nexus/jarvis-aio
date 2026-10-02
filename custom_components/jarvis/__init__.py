@@ -839,6 +839,14 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     except Exception as exc:
         _LOGGER.debug("Proactive-audio unload note: %s", exc)
 
+    # Stop the persistent-log writer thread so it doesn't outlive the entry and
+    # leak across reloads. The join is brief but blocks, so run it off-loop.
+    try:
+        from .websocket import stop_log_writer
+        await hass.async_add_executor_job(stop_log_writer)
+    except Exception as exc:
+        _LOGGER.debug("Log-writer stop note: %s", exc)
+
     # Remove services registered by this entry using a single source of truth so
     # the reload/unload lifecycle stays symmetric as new services are added.
     for service in JARVIS_SERVICE_NAMES:
