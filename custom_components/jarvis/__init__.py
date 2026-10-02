@@ -647,6 +647,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "event_ledger":       event_ledger,
     }
 
+    # Register services (idempotent — guarded against double-registration on
+    # reload) + the options-reload listener, then forward the conversation
+    # platform AS EARLY AS POSSIBLE — so `conversation.jarvis` is registered
+    # before the disk-touching panel-settings restore below. The ESP32 voice
+    # satellites resolve the agent the moment they connect at boot/reconnect, and
+    # a late registration is what produced the transient
+    # "intent recognition engine conversation.jarvis is not found" errors. The
+    # agent reads runtime_config lazily, so the brief window before the restore
+    # completes just falls back to defaults.
+    _register_services(hass, entry, _current_client, sentinel)
+    entry.async_on_unload(entry.add_update_listener(_async_update_listener))
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
     # Restore persisted panel settings via centralized jarvis_config module.
     # This loads from /config/jarvis/config.json (or migrates from old path).
     # We restore EVERY panel-writable key (LLM provider/model selections,
@@ -699,14 +712,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             )
     except Exception as exc:
         _LOGGER.debug("Config restore: %s", exc)
-
-    # Register services — guard against double-registration on reload.
-    _register_services(hass, entry, _current_client, sentinel)
-
-    # Reload services when options change
-    entry.async_on_unload(entry.add_update_listener(_async_update_listener))
-
-    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     # Auto-start Sentinel + Reminder watcher
     await sentinel.async_start()
