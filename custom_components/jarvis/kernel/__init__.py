@@ -23,6 +23,7 @@ from .event import (
 )
 from .event_bus import JarvisEventBus
 from .ledger import EventLedger
+from .world_model import WorldModel
 
 __all__ = [
     "JarvisEvent",
@@ -36,4 +37,5 @@ __all__ = [
     "correlation",
     "JarvisEventBus",
     "EventLedger",
+    "WorldModel",
 ]

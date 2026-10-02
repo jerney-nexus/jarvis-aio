@@ -1,11 +1,26 @@
 # JARVIS Kernel — phased plan of attack
 
-Status: **draft / proposed.** This is the plan of record for consolidating JARVIS's
+Status: **in progress.** This is the plan of record for consolidating JARVIS's
 subsystems into one coherent operating loop ("the kernel"), in response to the
 v8.4.0 architecture audit. It is written as a **strangler-fig migration** — wrap
 and absorb the working subsystems incrementally — **not** a big-bang rewrite. Each
 phase ships as its own release with green CI and a parity/regression guard, so
 JARVIS stays shippable throughout.
+
+### Progress
+
+| Phase | Status | Release(s) |
+| --- | --- | --- |
+| 0 — Foundations & guardrails | ✅ Shipped | 8.4.3 (HA lifecycle tests + CI gate), 8.5.0 (`JarvisEvent` + persistence seam) |
+| 1 — Event bus + correlated ledger | ✅ Shipped | 8.6.0 |
+| 2 — World-model facade | 🚧 In progress | 8.7.0 |
+| 3 — Situation manager | ⬜ Not started | 8.8.0 |
+| 4 — Authority / capability engine | ⬜ Not started | 8.9.0 |
+| 5 — Planner → Executor → Verifier | ⬜ Not started | 8.10.0 |
+| 6 — Beliefs · Attention · Model Router | ⬜ Not started | 8.11.0 |
+| 7 — Causal learning | ⬜ Not started | 8.12.0 |
+
+_Kept current as each phase merges._
 
 The audit's own conclusion is the premise here: the gap is **consolidation, not
 features**. Most of the "missing" pieces already exist as strong but parallel
@@ -51,7 +66,7 @@ subsystems; the work is giving them a common spine, not rebuilding them.
 
 ## Phase 0 — Foundations & guardrails (prerequisite)
 
-Target release: **8.5.0**
+Target release: **8.5.0** — **✅ Shipped** (HA lifecycle tests + CI gate in 8.4.3; `JarvisEvent` + persistence seam in 8.5.0).
 
 - **HA lifecycle integration tests in CI.** A hard prerequisite: without a real
   setup / reload / unload test exercised in CI, later kernel refactors can
@@ -70,7 +85,7 @@ Risk: low (all additive). Guard: full suite unchanged.
 
 ## Phase 1 — Event bus + correlated ledger
 
-Target release: **8.6.0** — highest leverage, lowest risk.
+Target release: **8.6.0** — highest leverage, lowest risk. **✅ Shipped** (shadow-mode bus + buffered ledger; `correlation_id` through `decision_record`).
 
 - `kernel/event_bus.py`: an in-process pub/sub. `observer`, `camera`,
   `proactive_audio`, and the voice path publish `JarvisEvent`s **in shadow mode**
@@ -84,7 +99,7 @@ later phase debuggable. Risk: low (shadow-only). Guard: no behavior change.
 
 ## Phase 2 — World-model facade
 
-Target release: **8.7.0**
+Target release: **8.7.0** — **🚧 In progress** (`kernel/world_model.py` read facade + parity tests).
 
 - `kernel/world_model.py`: a **read facade** over HA state + the knowledge graph +
   identity + scene memory, answering in canonical terms (people / rooms / devices
