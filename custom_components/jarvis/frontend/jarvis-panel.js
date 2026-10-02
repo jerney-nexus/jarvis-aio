@@ -4676,6 +4676,20 @@ dotLabel.textContent = lightBtn.classList.contains("adl")
       </div>
 ${this._renderRoutineLearning(d)}
 ${this._renderExcludedEntities(d)}
+      <!-- HOUSEHOLD FACES / RESIDENT WHITELIST (#140) -->
+      <div class="panel">
+        <div class="head">
+          <span>Household Faces</span>
+          <span class="side">WHITELIST</span>
+        </div>
+        <div class="appliance-intro">JARVIS doesn't run its own face engine — it reads recognized names from your vision backend (Frigate face recognition, or middleware like Double Take paired with CompreFace / DeepStack). Flag the people who live here as <b>residents</b> so JARVIS can tell a known face from an unknown one and stand intrusion monitoring down when the person it sees is a resident.</div>
+        <div class="faces-body" id="faces-body"><div class="mmwave-empty">Loading recognized faces…</div></div>
+        <div class="doclib-controls">
+          <input class="cfg-field" id="faces-add-name" type="text" placeholder="Add a resident by name" style="flex:1;min-width:160px;"/>
+          <button class="btn primary" id="faces-add-btn">+ Add resident</button>
+          <button class="btn" id="faces-refresh">⟳ Refresh</button>
+        </div>
+      </div>
       <!-- APPLIANCES / ENERGY PROFILE -->
       <div class="panel">
         <div class="head">
@@ -5267,7 +5281,7 @@ ${this._renderExcludedEntities(d)}
       "Satellite → Speaker": "voice", "Announcement Speakers": "voice",
       "Anticipation & Memory": "learning", "Memory": "learning",
       "Observer Tuning": "learning", "Routine Learning": "learning",
-      "Excluded Entities": "learning",
+      "Excluded Entities": "learning", "Household Faces": "learning",
       "Notifications": "safety", "Sentinel Rules": "safety",
       "Hazard Monitor": "safety", "Energy Management": "safety",
       "Appliances": "safety",
@@ -5463,6 +5477,7 @@ ${this._renderExcludedEntities(d)}
       this._wireHazard();
       this._wireBriefings();
       this._wireDocLibrary();
+      this._wireFaces();
     }
     if (this._currentTab === 'intrusion') {
       this._wireIntrusion();
@@ -7297,6 +7312,111 @@ ${this._renderExcludedEntities(d)}
 
   _wireIntrusion() {
     this._fetchIntrusion();
+  }
+
+  // ── Household Faces / resident whitelist (#140) ──
+  _wireFaces() {
+    const addBtn = this.shadowRoot?.getElementById("faces-add-btn");
+    const input = this.shadowRoot?.getElementById("faces-add-name");
+    const refresh = this.shadowRoot?.getElementById("faces-refresh");
+    const add = async () => {
+      const name = (input?.value || "").trim();
+      if (!name) return;
+      await this._facesAction("add_resident", name);
+      if (input) input.value = "";
+    };
+    addBtn?.addEventListener("click", add);
+    input?.addEventListener("keydown", (e) => { if (e.key === "Enter") add(); });
+    refresh?.addEventListener("click", () => this._fetchFaces());
+    this._fetchFaces();
+  }
+
+  async _facesAction(action, name) {
+    if (!this._hass) return;
+    try {
+      await this._hass.callWS({ type: "jarvis/faces", action, name });
+      this._toast(action === "remove_resident" ? "✓ removed resident" : "✓ added resident", "ok");
+      await this._fetchFaces();
+    } catch (err) {
+      this._toast(`✗ ${err?.message || err}`, "err");
+    }
+  }
+
+  async _fetchFaces() {
+    if (!this._hass) return;
+    try {
+      this._faces = await this._hass.callWS({ type: "jarvis/faces", action: "list", limit: 24 });
+    } catch (_) {
+      this._faces = { error: true };
+    }
+    this._renderFaces();
+  }
+
+  _renderFaces() {
+    const body = this.shadowRoot?.getElementById("faces-body");
+    if (!body) return;
+    const f = this._faces || {};
+    if (f.error) {
+      body.innerHTML = `<div class="mmwave-empty">Couldn't load — restart Home Assistant after updating.</div>`;
+      return;
+    }
+    const residents = Array.isArray(f.residents) ? f.residents : [];
+    const recent = Array.isArray(f.recent) ? f.recent : [];
+    let html = "";
+
+    // Residents (the whitelist itself)
+    html += `<div class="faces-section-label">Residents (${residents.length})</div>`;
+    if (residents.length) {
+      html += `<div class="faces-chips">` + residents.map(n =>
+        `<span class="faces-chip">${this._esc(n)}<button class="faces-chip-x" data-faces-remove="${this._esc(n)}" title="Remove resident">✕</button></span>`
+      ).join("") + `</div>`;
+    } else {
+      html += `<div class="mmwave-empty">No residents flagged yet. Add the people who live here, then recognized residents won't trigger intrusion alerts.</div>`;
+    }
+
+    // Recently recognized / unknown faces
+    html += `<div class="faces-section-label">Recently seen</div>`;
+    if (recent.length) {
+      html += `<div class="faces-list">` + recent.map(r => {
+        const cam = this._esc((r.camera || "").replace(/_/g, " ") || "camera");
+        const age = this._facesAge(r.age_seconds);
+        const conf = r.is_unknown ? "" : `${Math.round(r.confidence || 0)}%`;
+        const badge = r.is_resident
+          ? `<span class="faces-badge resident">RESIDENT</span>`
+          : (r.is_unknown ? `<span class="faces-badge unknown">UNKNOWN</span>` : "");
+        const action = (r.is_unknown || r.is_resident) ? "" :
+          `<button class="btn faces-mark" data-faces-add="${this._esc(r.name)}">+ resident</button>`;
+        const rm = r.is_resident
+          ? `<button class="btn faces-mark" data-faces-remove="${this._esc(r.name)}">remove</button>` : "";
+        return `<div class="faces-row">
+          <div class="faces-row-main">
+            <span class="faces-name">${this._esc(r.name)}</span>${badge}
+          </div>
+          <div class="faces-row-meta">${cam}${conf ? " · " + conf : ""}${age ? " · " + age : ""}</div>
+          <div class="faces-row-act">${action}${rm}</div>
+        </div>`;
+      }).join("") + `</div>`;
+    } else {
+      html += `<div class="mmwave-empty">No faces recognized recently. When your backend names a face, it appears here — mark anyone who lives here as a resident.</div>`;
+    }
+
+    if (f.recognition_source) {
+      html += `<div class="faces-src">Reading identities from: <b>${this._esc(String(f.recognition_source))}</b></div>`;
+    }
+
+    body.innerHTML = html;
+    body.querySelectorAll("[data-faces-add]").forEach(el =>
+      el.addEventListener("click", () => this._facesAction("add_resident", el.getAttribute("data-faces-add"))));
+    body.querySelectorAll("[data-faces-remove]").forEach(el =>
+      el.addEventListener("click", () => this._facesAction("remove_resident", el.getAttribute("data-faces-remove"))));
+  }
+
+  _facesAge(secs) {
+    const s = Number(secs);
+    if (!isFinite(s) || s < 0 || s >= 1e8) return "";
+    if (s < 60) return `${Math.round(s)}s ago`;
+    if (s < 3600) return `${Math.round(s / 60)}m ago`;
+    return `${Math.round(s / 3600)}h ago`;
   }
 
   async _fetchMode() {
@@ -9868,6 +9988,23 @@ ${this._renderExcludedEntities(d)}
   .intr-snap-meta { font-size: 9px; color: var(--text-dim); font-family: var(--font-mono); margin-top: 4px; }
   .intr-fa { font-size: 10px; color: var(--amber); margin-top: 8px; }
   .intr-ack { font-size: 10px; color: var(--green); margin-top: 8px; }
+  /* Household Faces (#140) */
+  .faces-section-label { font-size: 10px; letter-spacing: .08em; color: var(--text-dim); text-transform: uppercase; margin: 12px 0 6px; }
+  .faces-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .faces-chip { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-family: var(--font-mono); background: var(--panel-2, rgba(255,255,255,.05)); border: 1px solid var(--border, rgba(255,255,255,.12)); border-radius: 12px; padding: 3px 6px 3px 10px; }
+  .faces-chip-x { background: none; border: none; color: var(--text-dim); cursor: pointer; font-size: 11px; line-height: 1; padding: 0 2px; }
+  .faces-chip-x:hover { color: var(--red, #e55); }
+  .faces-list { display: flex; flex-direction: column; gap: 4px; }
+  .faces-row { display: grid; grid-template-columns: 1fr auto; grid-template-areas: "main act" "meta act"; align-items: center; gap: 0 10px; padding: 6px 8px; border: 1px solid var(--border, rgba(255,255,255,.08)); border-radius: 6px; }
+  .faces-row-main { grid-area: main; display: flex; align-items: center; gap: 8px; }
+  .faces-row-meta { grid-area: meta; font-size: 10px; color: var(--text-dim); font-family: var(--font-mono); }
+  .faces-row-act { grid-area: act; display: flex; gap: 6px; }
+  .faces-name { font-size: 12px; }
+  .faces-mark { font-size: 10px; padding: 3px 8px; }
+  .faces-badge { font-size: 9px; letter-spacing: .06em; padding: 1px 6px; border-radius: 8px; font-family: var(--font-mono); }
+  .faces-badge.resident { background: rgba(80,200,120,.16); color: var(--green, #5c8); }
+  .faces-badge.unknown { background: rgba(230,180,60,.16); color: var(--amber, #e9b23c); }
+  .faces-src { font-size: 10px; color: var(--text-dim); margin-top: 10px; font-family: var(--font-mono); }
   .intr-timeout-row { display: flex; justify-content: space-between; align-items: center; margin-top: 10px; }
   .intr-timeout-row label { font-size: 11px; color: var(--text-dim); }
   .intr-timeout { background: rgba(0,0,0,0.25); border: 1px solid var(--line); border-radius: 5px; color: var(--text); font-size: 11px; padding: 5px 9px; }

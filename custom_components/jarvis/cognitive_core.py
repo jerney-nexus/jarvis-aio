@@ -532,6 +532,17 @@ class SafetyManager:
             return cam        # best-effort handle even if not yet resolvable
         return None
 
+    def _resident_on_camera(self) -> bool:
+        """Whether a flagged household resident was recognized on camera recently
+        (face whitelist, #140). Used to stand intrusion monitoring down when the
+        person JARVIS sees is known. False (no effect) when no residents are
+        flagged or recognition is unavailable. Never raises."""
+        try:
+            from . import recognition
+            return bool(recognition.resident_present(self.hass))
+        except Exception:
+            return False
+
     async def _check_intrusion(self, anyone_home: bool,
                                 sleeping: bool, confined: bool = False) -> Optional[dict]:
         """Detect unauthorized entry when away or asleep. Fires ONE alert, then
@@ -557,6 +568,11 @@ class SafetyManager:
         # otherwise. This is what stops the stream of repeat "motion" alerts.
         if self._investigation is not None:
             return await self._investigate_step(now, away, sleeping)
+
+        # A recognized household resident on camera → don't even raise the initial
+        # alert; the person being seen is known (#140). No-op without a whitelist.
+        if self._resident_on_camera():
+            return None
 
         if (now - self._last_intrusion_alert) < 300:
             return None
@@ -775,6 +791,14 @@ class SafetyManager:
 
         # Residents came home / no longer away → stand down.
         if not away:
+            self._investigation = None
+            return None
+
+        # A recognized household resident on camera → stand down. The person
+        # JARVIS is seeing is a known resident (face whitelist, #140), not an
+        # intruder. No-op when no residents are flagged, so default behavior is
+        # unchanged.
+        if self._resident_on_camera():
             self._investigation = None
             return None
 

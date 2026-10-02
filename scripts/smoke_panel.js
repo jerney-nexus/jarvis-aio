@@ -71,6 +71,7 @@ let _energyAgency = "advisory";
 let _bioEnabled = false;
 let _intrCalledOff = false;
 let _intrAck = false;
+const _residents = ["Sam"];
 const _intrSnap = { url: "/local/jarvis/intrusion/intrusion_dining_room_1730000000.jpg", camera: "camera.dining_room", ts: 1730000000, path: "/config/www/jarvis/intrusion/x.jpg" };
 const hass = {
   config: { location_name: "Springfield IL", latitude: 39.78, longitude: -89.65 },
@@ -217,6 +218,19 @@ const hass = {
       { ts: "09:00:02", cat: "AGENT", msg: "executed light.turn_on for porch" },
       { ts: "09:01:15", cat: "ERROR", msg: "camera.front unavailable" },
     ] };
+    if (m.type === "jarvis/faces") {
+      if (m.action === "add_resident" && m.name && !_residents.includes(m.name)) _residents.push(m.name);
+      if (m.action === "remove_resident" && m.name) { const i = _residents.indexOf(m.name); if (i >= 0) _residents.splice(i, 1); }
+      return {
+        residents: _residents.slice(),
+        recent: [
+          { name: "Sam", camera_entity: "camera.front", camera: "front_door", confidence: 94.0, age_seconds: 20, is_unknown: false, is_resident: _residents.includes("Sam"), source: "recent_cache" },
+          { name: "Quentin", camera_entity: "camera.front", camera: "front_door", confidence: 88.0, age_seconds: 90, is_unknown: false, is_resident: _residents.includes("Quentin"), source: "recent_cache" },
+          { name: "Unknown", camera_entity: "camera.back", camera: "backyard", confidence: 0.0, age_seconds: 300, is_unknown: true, is_resident: false, source: "frigate_sensor" },
+        ],
+        recognition_source: "frigate",
+      };
+    }
     return {};
   },
   connection: {
@@ -950,6 +964,23 @@ setTimeout(async () => {
       && !!el.shadowRoot.querySelector("#excl-lab-add")],
     ["excluded-entities card maps to the Learning section",
       !!_exclCard && _exclCard.dataset.section === "learning"],
+  );
+
+  // #140: Household Faces card — resident whitelist + recently recognized faces.
+  const _facesCard = _card("Household Faces");
+  await el._fetchFaces();
+  const _facesBody = el.shadowRoot.getElementById("faces-body")?.innerHTML || "";
+  checks.push(
+    ["household-faces card maps to the Learning section",
+      !!_facesCard && _facesCard.dataset.section === "learning"],
+    ["household-faces card has add-resident input + button",
+      !!el.shadowRoot.querySelector("#faces-add-name") && !!el.shadowRoot.querySelector("#faces-add-btn")],
+    ["household-faces lists the current resident (Sam)", /faces-chip[\s\S]*Sam/.test(_facesBody)],
+    ["household-faces badges a recognized resident", /faces-badge resident/.test(_facesBody)],
+    ["household-faces badges an unknown face", /faces-badge unknown/.test(_facesBody)],
+    ["household-faces offers to flag a recognized non-resident",
+      /data-faces-add="Quentin"/.test(_facesBody)],
+    ["household-faces shows the recognition source hint", /Reading identities from/.test(_facesBody)],
   );
 
   // v8.0.0: the safety-sensitive garage/cover confirmation suggestions are

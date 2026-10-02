@@ -209,6 +209,95 @@ def who_is_where(hass: HomeAssistant) -> dict[str, str]:
     return out
 
 
+def _is_unknown(name: str) -> bool:
+    return (name or "").strip().lower() in ("unknown", "unknown person", "unknown_face")
+
+
+def recent_faces(hass: HomeAssistant, limit: int = 20) -> list[dict]:
+    """The most recent face recognition per camera, for the Household Faces panel
+    (issue #140). Merges the MQTT-driven recognition cache with Frigate's
+    last_recognized_face sensors, de-dupes to one row per (name, camera), marks
+    each row known/unknown and whether the name is a flagged household resident,
+    and returns newest first. Never raises."""
+    try:
+        from . import face_roster
+    except Exception:
+        face_roster = None
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    rows: dict[tuple, dict] = {}
+
+    def _add(name, cam_entity, conf, age_seconds, source):
+        name = (name or "").strip()
+        if not name:
+            return
+        key = (name.lower(), cam_entity)
+        prior = rows.get(key)
+        if prior is not None and prior["age_seconds"] <= age_seconds:
+            return  # keep the fresher sighting
+        unknown = _is_unknown(name)
+        rows[key] = {
+            "name": name,
+            "camera_entity": cam_entity,
+            "camera": (cam_entity or "").split(".", 1)[-1],
+            "confidence": round(float(conf or 0.0), 1),
+            "age_seconds": int(age_seconds),
+            "is_unknown": unknown,
+            "is_resident": bool(
+                face_roster and not unknown and face_roster.is_resident(name)),
+            "source": source,
+        }
+
+    try:
+        for cam, rec in _RECOGNITION_CACHE.items():
+            ts = rec.get("ts")
+            age = int((now - ts).total_seconds()) if ts else 10 ** 9
+            if ts and (now - ts) > CACHE_MAX_AGE:
+                continue
+            _add(rec.get("name"), cam, rec.get("confidence", 0.0), age, "recent_cache")
+    except Exception:
+        pass
+    try:
+        for f in read_frigate_face_sensors(hass):
+            # Sensors report the last recognized face with no timestamp; treat as
+            # the oldest tier so a live cache hit for the same person wins.
+            _add(f.get("name"), f.get("camera_entity"), f.get("confidence", 0.0),
+                 10 ** 9, "frigate_sensor")
+    except Exception:
+        pass
+
+    out = sorted(rows.values(), key=lambda r: r["age_seconds"])
+    return out[: max(1, int(limit or 20))]
+
+
+def resident_present(hass: HomeAssistant, within_secs: int = 180) -> Optional[str]:
+    """Name of a flagged household resident recognized on any camera within the
+    last ``within_secs`` (confidently), else None. Used to stand intrusion
+    monitoring down when a known resident is the one JARVIS is seeing (#140).
+    Never raises."""
+    try:
+        from . import face_roster
+    except Exception:
+        return None
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    best = None
+    try:
+        for rec in _RECOGNITION_CACHE.values():
+            name = rec.get("name", "")
+            ts = rec.get("ts")
+            if not name or _is_unknown(name) or not ts:
+                continue
+            if (now - ts).total_seconds() > within_secs:
+                continue
+            if rec.get("confidence", 0.0) < CONFIDENCE_THRESHOLD:
+                continue
+            if face_roster.is_resident(name):
+                best = name
+                break
+    except Exception:
+        return None
+    return best
+
+
 def recognition_context_string(hass: HomeAssistant) -> str:
     """One-line summary for the conversation agent's system prompt, merging the
     MQTT-driven recognition cache with Frigate's last_recognized_face sensors —
