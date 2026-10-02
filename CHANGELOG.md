@@ -1,3 +1,15 @@
+## [8.8.0] — kernel Phase 3: durable situation state machine
+
+Phase 3 of the kernel plan (docs/KERNEL_PLAN.md): generalises the ad-hoc intrusion state machine (scattered across `intrusion.py` and the SafetyManager) into one reusable, durable, correlated **situation** lifecycle that any flow — intrusion first, delivery and hazards later — can drive. **Additive and opt-in**: the machine ships now; no existing flow is migrated onto it yet, so there is no behaviour or settings change.
+
+- **`kernel/situation.py`** — a pure, validated lifecycle: `normal → possible → investigating → confirmed/benign → response → resolved`, with every active state able to reach `resolved` so a situation is never stuck. `can_transition` / `is_terminal` and the transition table are pure and fully tested; an illegal move raises `InvalidTransition` rather than silently corrupting state.
+- **`Situation`** is an immutable record whose `stepped()` returns a new value with an append-only transition history (`from`/`to`/`ts`/`reason`/`event_id`), carrying a `correlation_id` so a situation links into the Phase 1 event→decision trail.
+- **`SituationManager`** persists each situation and its history through the `kernel.persistence` seam (its own SQLite file), so an open situation survives a restart; `open()` / `transition()` / `resolve()` / `open_situations()` drive and query it. Writes are synchronous (situations are low-frequency) — event-loop callers use an executor.
+
+Next increment: `intrusion` adopts the machine as the first consumer, running alongside the existing path (shadow) until recorded verdicts match, then flips — kept out of this release so the SafetyManager authoritative path is migrated carefully.
+
+New unit tests (24) across the transition table, `Situation` value semantics, and the durable manager. Audit clean (120 modules); full suite green.
+
 ## [8.7.1] — fix: stop using the deprecated DeviceRegistry.devices mapping
 
 Home Assistant 2026.08 deprecated accessing `device_registry.devices` as a mapping (`.values()`, `.get()`, membership, subscription), with removal in **HA 2027.9**. `camera._nest_device_to_camera` iterated `dev_reg.devices.values()` to map a Nest device id to its camera entity, which would have broken on that release (flagged by the Home Assistant Breakage Radar).
