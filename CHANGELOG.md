@@ -1,3 +1,15 @@
+## [8.16.0] — kernel hardening H4: execution journal + crash recovery
+
+Final post-migration hardening item (docs/KERNEL_PLAN.md → "Post-migration hardening"). **No behaviour change** — additive, built on the existing persistence seam.
+
+- **`kernel/journal.py`** — an `ExecutionJournal` that writes each plan step's lifecycle durably through `kernel.persistence`: `record_plan` (steps as PENDING) → `start_step` (RUNNING) → `finish_step` (DONE / FAILED / VERIFY_FAILED / …). Because it's on disk, after a restart `in_flight()` returns exactly the steps that were started but never resolved — the ones whose real-world effect is unknown.
+- **`recover(journal, verify=, act=)`** — settles each in-flight step after a restart. An injected `verify(step)` asks live state whether the action actually took hold → marked DONE; otherwise the step is re-run via an injected `act(step)` (idempotency in the actuator makes this safe) or, with no `act`, flagged **NEEDS_REPLAY** for the caller. A raising `verify`/`act` is treated as "not recovered", never fatal. Returns a `RecoveryReport` (checked / verified / needs_replay / replayed).
+- Its own DB file and tables (no schema merge); no Home Assistant import, injected clock + checks, so it's deterministic and tested against a real temp SQLite DB.
+
+New unit tests (12): pending/terminal queries, idempotent re-record, in-flight surviving a fresh process (simulated crash), and the full recovery matrix (verified / needs-replay / replayed / act-failure / raising-verify / no-op). Audit clean; adoption check green; full suite green.
+
+**This completes the post-migration hardening shortlist (H1–H4).**
+
 ## [8.15.0] — kernel hardening H3: feedback-loop detection
 
 Third post-migration hardening item (docs/KERNEL_PLAN.md → "Post-migration hardening"). **No behaviour change** — a pure primitive, additive.
