@@ -1,3 +1,15 @@
+## [8.22.0] — behavioral kernel-coverage matrix (MCU audit A1)
+
+First item from the second external architecture audit ("JARVIS needs to *become* the kernel, not just *have* one"). **Additive** — a new script, doc, and CI gate; no runtime change.
+
+`KERNEL_ADOPTION.md` answers *"does a live module reference a kernel primitive?"* — necessary but not sufficient, since a module can import `authorize` and still have actuators that bypass Authority. This adds the sharper measure the audit asked for:
+
+- **`scripts/kernel_coverage.py` + `KERNEL_COVERAGE.md`** — for each behaviour-bearing path (`control_device`, `bulk_control`, `execute_plan`, `goals`, `intrusion`, `proactive`, `friday`, `homer`), declares how far each pipeline contract (**Event → WorldModel → Situation → Authority → Plan → Verify → Outcome**) is actually wired: `none / shadow / parity / full`. Every non-`none` cell is verified against evidence that must exist in the path's source, so the matrix can't drift into fiction. It prints one honest coverage percentage.
+- **Honest starting number: 4.2%** — most paths are still legacy (`control_device` has Authority-parity + verify-after-act; `intrusion` has Situation-parity; the rest are unwired). This is the figure to move as paths migrate — far more meaningful than "Phase N completed."
+- **CI gate** — `kernel_coverage.py --check` runs in the audit job and fails on evidence drift.
+
+6 new tests. Audit clean; adoption + coverage checks green; full suite green. Authority stays log-only/owner-gated — this measures wiring, not a licence to enforce.
+
 ## [8.21.1] — fix: false "intrusion confirmed" when the covering camera shows no one
 
 A window/motion trip while away escalated to a **confirmed intrusion** ("someone is moving inward through the house from the point of entry") even though JARVIS's own camera saw an **empty** room — a false alarm fired while the resident was sitting in the driveway, with camera-confirm enabled and the garage empty.
