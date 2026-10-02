@@ -1,3 +1,16 @@
+## [8.7.0] — kernel Phase 2: world-model read facade
+
+Phase 2 of the kernel plan (docs/KERNEL_PLAN.md): a single **read-only** view over the facts JARVIS already has, answered in canonical terms. **Additive and opt-in** — nothing is migrated onto it yet, so there is no behaviour or settings change; reasoning paths will adopt it one caller at a time in later work.
+
+- **`kernel/world_model.py`** — `WorldModel(hass)` answers canonical questions over Home Assistant state, the knowledge graph, identity/presence and scene memory, instead of callers each reaching into raw entity ids and ad-hoc dict shapes:
+  - `device(entity_id)` / `devices(domain=, area=)` / `rooms()` — canonical snapshots over `hass.states`, with each entity's area resolved best-effort.
+  - `people()` / `person_in(area)` — the presence roster (home/away) and a best guess of who's in an area.
+  - `facts(subject)` / `relationships(subject, obj, predicate)` — curated facts and typed edges from the knowledge graph.
+  - `last_seen(term)` — where the cameras last saw something, from scene memory.
+- **Read-only and best-effort by contract** — no method writes state, fires events, or mutates a store, and each degrades to an empty/None result rather than raising. Each non-HA source sits behind a small module-level seam, so the facade's import surface stays tiny and the raw sources remain authoritative underneath.
+
+New unit tests (13), including parity checks that the HA-state reads match direct `hass.states`. Audit clean (119 modules); full suite green.
+
 ## [8.6.0] — kernel Phase 1: shadow event bus + correlated decision trail
 
 Phase 1 of the kernel plan (docs/KERNEL_PLAN.md), running in **shadow mode**: the observer, camera and voice paths now publish `JarvisEvent`s alongside their existing logic, and a ledger records them. **Nothing consumes events to drive behaviour** — existing code paths stay authoritative — so there is no behaviour or settings change. The payoff is a queryable, correlated trail that later phases build on, and it is entirely best-effort (a bus or ledger failure can never affect the authoritative paths).
