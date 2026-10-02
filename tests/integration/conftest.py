@@ -11,7 +11,22 @@ required for the unit suite; these tests skip cleanly when it is absent.
 
     pip install pytest-homeassistant-custom-component
 """
+import pathlib
+import sys
+
 import pytest
+
+# Ensure the repo root is on sys.path so `import custom_components.jarvis`
+# resolves to THIS repo. The bare `pytest` console script does not put the
+# working directory on sys.path (unlike `python -m pytest`), so without this the
+# `custom_components` namespace package can resolve to a path that doesn't
+# include this repo and HA's loader reports `IntegrationNotFound: jarvis`.
+# Dropping a pre-imported `custom_components` forces the namespace to be rebuilt
+# with the repo root included.
+_REPO_ROOT = str(pathlib.Path(__file__).resolve().parents[2])
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+sys.modules.pop("custom_components", None)
 
 # Skip this entire directory unless PHACC is installed.
 pytest.importorskip(
