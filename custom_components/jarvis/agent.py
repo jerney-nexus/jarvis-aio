@@ -1186,8 +1186,12 @@ async def _exec_control_device(hass: HomeAssistant, args: dict) -> str:
             # to validate before enforcement is ever flipped on. Never blocks.
             try:
                 from . import authority_bridge
+                # Feed the engine the richer request it will decide on once
+                # enforced (MCU audit A4): why (intent) and what (scope). Still
+                # log-only — parity never changes the gate's outcome.
                 authority_bridge.record_control_parity(
-                    hass, svc_domain, svc_name, allowed=ok)
+                    hass, svc_domain, svc_name, allowed=ok,
+                    intent=action.replace("_", " "), scope=entity_id)
             except Exception:
                 pass
             if not ok:
