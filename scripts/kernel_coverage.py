@@ -47,6 +47,10 @@ _PATHS: dict[str, dict] = {
     "control_device": {
         "module": "agent.py",
         "contracts": {
+            # 8.30.0 (MCU Phase A): the pre-action context snapshot is read
+            # through the WorldModel facade. Parity, not full — the post-action
+            # verify/read-back still reads raw HA state.
+            "world_model": {"stage": "parity", "evidence": "WorldModel"},
             # H1: logs the Phase-4 engine decision vs the live confirm-gate.
             "authority": {"stage": "parity", "evidence": "authority_bridge"},
             # v6.38 verify-after-act for deterministic targets.

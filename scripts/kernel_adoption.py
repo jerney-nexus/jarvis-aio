@@ -44,8 +44,9 @@ _DECLARED: dict[str, dict] = {
     "correlation":  {"stage": "shadow",  "owners": ["decision_record", "observer", "proactive_audio"]},
     "event_bus":    {"stage": "shadow",  "owners": ["__init__"]},
     "ledger":       {"stage": "shadow",  "owners": ["__init__"]},
-    # world_model: read facade built, but nothing live consults it yet.
-    "world_model":  {"stage": "pure",    "owners": []},
+    # world_model: control_device reads its pre-action context snapshot through
+    # the facade and uses the result (area, previous_state) — 8.30.0, MCU Phase A.
+    "world_model":  {"stage": "parity",  "owners": ["agent"]},
     "situation":    {"stage": "parity",  "owners": ["intrusion"]},
     "authority":    {"stage": "parity",  "owners": ["authority_bridge"]},
     "plan":         {"stage": "pure",    "owners": []},
