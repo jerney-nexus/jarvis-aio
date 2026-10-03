@@ -1,3 +1,14 @@
+## [8.34.0] — MCU Phase A (5/5): the governance rule, enforced in CI
+
+The final Phase A step — the audit's **"rule I would add now"**: *any new behaviour that can cause a consequential action on the home must enter through the kernel contract from the start.* This release writes it down **and enforces it**, so the migration debt the audit warned about (features outpacing the kernel — proven by 8.27→8.29 moving coverage 0.0 points) cannot grow silently.
+
+- **New governance gate in `scripts/kernel_coverage.py --check`** (already run by CI). It fails if a tool in agent's `_TOOL_MAP` is **neither** a declared coverage path in `_PATHS` **nor** in the new `_NON_ACTUATOR_TOOLS` allowlist (read-only / informational / bookkeeping tools). A newly-added actuator tool therefore can't land uncounted — the author must wire it as a path or explicitly classify it as a non-actuator. The `_TOOL_MAP` keys are parsed from source with `ast` (no import), keeping the script stdlib-only.
+- **The gate paid for itself immediately.** It surfaced two consequential tools that were acting on the home without appearing in the coverage matrix at all — **`run_scene_or_script`** (activates scenes/scripts/automations) and **`set_mode`** (applies a mode scene via `mode_scene`). Both are now declared as the legacy (all-`none`) paths they are.
+- **Honest coverage: 8.9% → 7.1%** — it *dropped on purpose*. Declaring the two previously-invisible consequential paths grew the denominator; a lower, complete number beats a higher, partial one. This is exactly the honesty the matrix exists to enforce.
+- **The rule is documented** in `KERNEL_COVERAGE.md` (new "Governance rule" section) and `CONTRIBUTING.md` (new "Kernel contract rule for new actions" section, plus the adoption/coverage gates added to the local-checks list).
+
+This completes **MCU Phase A**: `control_device` is the golden end-to-end kernel path — `world_model` ◑, `outcome` ●, `event` ◑, `plan` ◐, alongside `authority` ◑ (log-only) and `verify` ● — and the governance rule keeps every future consequential action on the kernel contract. 6 new tests (gate satisfied, known actuators declared, gate catches an undeclared actuator, allowlisted tool accepted, the `ast` parser). **Authority remains log-only / owner-gated — the enforce flip is a separate, explicit decision and was not taken.** Kernel/governance → middle-digit bump **8.33.0 → 8.34.0**. Full suite green; audit + adoption + coverage gates clean.
+
 ## [8.33.0] — MCU Phase A (4/5): control_device expresses the actuation as a kernel Plan
 
 Step 4 of 5 of the Phase A golden path — the **plan** contract on `control_device`. The audit noted the project has a real `kernel.plan` (preconditions → act → postconditions, idempotency, retries) that the live agent hadn't adopted. This release has `control_device` express each actuation as a canonical one-step kernel `Plan`.

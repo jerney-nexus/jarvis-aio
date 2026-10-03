@@ -73,6 +73,12 @@ _PATHS: dict[str, dict] = {
     "bulk_control": {"module": "agent.py", "contracts": {}},
     # Legacy in-agent executor; the kernel planner (kernel.plan) is not adopted.
     "execute_plan": {"module": "agent.py", "contracts": {}},
+    # Activates scenes/scripts/automations — a consequential actuator, still
+    # fully legacy. Declared (8.34.0) so the governance gate can see it.
+    "run_scene_or_script": {"module": "agent.py", "contracts": {}},
+    # Mode directive whose entry applies a mode scene (mode_scene) — changes the
+    # home, still legacy. Declared (8.34.0) so the governance gate can see it.
+    "set_mode": {"module": "agent.py", "contracts": {}},
     # Intrusion mirrors its lifecycle into the kernel Situation state machine.
     "intrusion": {
         "module": "intrusion.py",
@@ -85,6 +91,70 @@ _PATHS: dict[str, dict] = {
     "friday": {"module": "agent.py", "contracts": {}},
     "homer": {"module": "agent.py", "contracts": {}},
 }
+
+
+# ── governance gate (8.34.0, the audit's "rule I would add now") ─────────────
+# Every agent tool that can cause a consequential action on the home must be a
+# declared path above, so it cannot silently bypass the kernel coverage matrix.
+# This is the allowlist of tools that are NOT home actuators — read-only,
+# informational, memory/preferences, scheduling, goal/suggestion bookkeeping,
+# alert acknowledgement. A tool in `_TOOL_MAP` (agent.py) that is neither here
+# nor in `_PATHS` fails the gate: classify it (add it here) or wire it (add it
+# as a path). A NEW actuator tool therefore cannot land uncounted.
+_NON_ACTUATOR_TOOLS: frozenset[str] = frozenset({
+    # read / informational
+    "get_entity_state", "search_entities", "get_area_devices", "get_home_summary",
+    "cognitive_status", "connectivity_status", "system_diagnostics",
+    "energy_status", "hazard_report", "activity_history", "weather_forecast",
+    "wellbeing_context", "root_cause", "web_research", "calendar_agenda",
+    "read_email", "look_at_camera", "who_do_you_see", "where_last_seen",
+    "search_documents", "ingest_documents",
+    # memory / preferences
+    "remember", "ignore_entity", "unignore_entity",
+    # scheduling / goals / suggestions (bookkeeping, not home actuation)
+    "schedule_followup", "manage_followups", "create_goal", "update_goal",
+    "manage_goals", "review_suggestions", "approve_suggestion",
+    "dismiss_suggestion", "manage_autonomy",
+    # alert / intrusion acknowledgement (state of an alert, not a device)
+    "dismiss_intrusion", "acknowledge_alert",
+})
+
+
+def _tool_map_names(agent_src: str) -> list[str]:
+    """The string keys of ``_TOOL_MAP`` in agent.py, parsed from source (no
+    import, so the gate stays stdlib-only like the rest of this script)."""
+    import ast
+    tree = ast.parse(agent_src)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            for tgt in node.targets:
+                if isinstance(tgt, ast.Name) and tgt.id == "_TOOL_MAP" \
+                        and isinstance(node.value, ast.Dict):
+                    return [k.value for k in node.value.keys
+                            if isinstance(k, ast.Constant) and isinstance(k.value, str)]
+    return []
+
+
+def undeclared_actuator_tools() -> list[str]:
+    """Problems: an agent tool that is neither declared as a kernel-coverage path
+    nor classified as a non-actuator — i.e. a consequential path that could
+    bypass the matrix. Empty when the gate is satisfied."""
+    comp = _component_dir()
+    agent = comp / "agent.py"
+    if not agent.exists():
+        return ["agent.py not found — cannot check actuator-path coverage"]
+    names = _tool_map_names(agent.read_text())
+    if not names:
+        return ["could not parse _TOOL_MAP from agent.py"]
+    problems = []
+    for name in names:
+        if name in _PATHS or name in _NON_ACTUATOR_TOOLS:
+            continue
+        problems.append(
+            f"tool '{name}' is neither a declared coverage path nor an "
+            f"allowlisted non-actuator — classify it in _NON_ACTUATOR_TOOLS "
+            f"or declare it in _PATHS (governance rule, 8.34.0)")
+    return problems
 
 
 def _component_dir() -> pathlib.Path:
@@ -172,12 +242,20 @@ def main(argv: list[str]) -> int:
 
     if "--check" in argv:
         problems = drift()
-        if problems:
-            print("\nDRIFT:", file=sys.stderr)
-            for p in problems:
-                print(f"  - {p}", file=sys.stderr)
+        gate = undeclared_actuator_tools()
+        if problems or gate:
+            if problems:
+                print("\nDRIFT:", file=sys.stderr)
+                for p in problems:
+                    print(f"  - {p}", file=sys.stderr)
+            if gate:
+                print("\nUNDECLARED ACTUATOR PATH:", file=sys.stderr)
+                for p in gate:
+                    print(f"  - {p}", file=sys.stderr)
             return 1
         print("\ncoverage matrix OK — every declared stage has live evidence")
+        print("governance gate OK — every consequential agent tool is a "
+              "declared path")
     return 0
 
 
