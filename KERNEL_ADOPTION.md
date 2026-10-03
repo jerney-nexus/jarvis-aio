@@ -34,11 +34,13 @@ holds on the live home system.
 <!-- BEGIN kernel-adoption (python3 scripts/kernel_adoption.py --markdown) -->
 | Primitive | Stage | Live callers |
 | --- | --- | --- |
+| `actuator` | ◑ parity | `agent` |
 | `attention` | · pure | — |
 | `authority` | ◑ parity | `authority_bridge` |
 | `beliefs` | · pure | — |
+| `budget` | · pure | — |
 | `causal` | · pure | — |
-| `correlation` | ◐ shadow | `decision_record`, `observer`, `proactive_audio` |
+| `correlation` | ◐ shadow | `agent`, `decision_record`, `observer`, `proactive_audio` |
 | `event` | ◑ parity | `camera`, `observer`, `proactive_audio` |
 | `event_bus` | ◐ shadow | `__init__` |
 | `journal` | · pure | — |
@@ -62,6 +64,13 @@ holds on the live home system.
   — the canonical context authority — and uses the result (area, previous_state),
   falling back to raw HA state. Parity, not enforce: the facade informs the path
   but the raw sources stay authoritative underneath.
+- **actuator** is at parity through `agent` (8.26.0 → 8.31.0, MCU Phase A): the
+  `control_device` path builds a canonical `ActuatorRequest` (now carrying the
+  expected end-state) and the verify step produces the matching `ActuatorOutcome`
+  (requested → executed → observed → verified / mismatch / failed). Parity, not
+  enforce: the contract records the actuation faithfully, but legacy code still
+  performs the HA service call — routing *execution* through the actuator is a
+  later step.
 - **authority** is at parity through `authority_bridge` (log-only): every control
   action records what the capability engine *would* have decided against what the
   legacy confirm-gate actually did. Flipping it to `enforce` on the live system is

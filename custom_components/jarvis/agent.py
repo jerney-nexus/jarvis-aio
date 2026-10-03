@@ -1158,6 +1158,7 @@ async def _exec_control_device(hass: HomeAssistant, args: dict) -> str:
     prev_state = snapshot["state"] if snapshot else (state.state if state else "unknown")
     wm_area = snapshot.get("area") if snapshot else None
     svc_data = {"entity_id": entity_id}
+    areq = None   # the canonical ActuatorRequest for this actuation, if built
 
     try:
         action_map = {
@@ -1212,20 +1213,23 @@ async def _exec_control_device(hass: HomeAssistant, args: dict) -> str:
                     "entity_id": entity_id,
                     "message": note or f"Confirmation required before {action} on {entity_id}.",
                 })
-            # Universal actuator contract (MCU A5), SHADOW: describe this
-            # actuation as one canonical ActuatorRequest and log it — no
-            # behaviour change. As the actuator paths migrate, execution routes
-            # through this shape (who/intent/target/correlation/idempotency).
+            # Universal actuator contract (MCU A5 / Phase A): describe this
+            # actuation as one canonical ActuatorRequest, now carrying the
+            # expected end-state for deterministic targets so the outcome can be
+            # verified against it (who/intent/target/correlation/idempotency/
+            # expected_outcome). No behaviour change to what executes.
             try:
                 from .kernel import build_actuator_request, correlation as _corr
-                _areq = build_actuator_request(
+                _expected = _EXPECTED_STATES.get(action)
+                areq = build_actuator_request(
                     f"{svc_domain}.{svc_name}", target=entity_id,
                     params=dict(svc_data), intent=action.replace("_", " "),
                     correlation_id=_corr.current(),
-                    idempotency_key=f"{entity_id}:{action}")
-                _LOGGER.debug("actuator(shadow): %s", _areq.to_dict())
+                    idempotency_key=f"{entity_id}:{action}",
+                    expected_outcome="/".join(_expected) if _expected else None)
+                _LOGGER.debug("actuator(request): %s", areq.to_dict())
             except Exception:
-                pass
+                areq = None
             await hass.services.async_call(svc_domain, svc_name, svc_data, blocking=True)
         else:
             return json.dumps({"error": f"Unknown action: {action}"})
@@ -1239,7 +1243,8 @@ async def _exec_control_device(hass: HomeAssistant, args: dict) -> str:
         if action in action_map and action in _EXPECTED_STATES:
             v_dom, v_svc = action_map[action]
             hass.async_create_task(
-                _verify_control(hass, entity_id, action, v_dom, v_svc, svc_data))
+                _verify_control(hass, entity_id, action, v_dom, v_svc, svc_data,
+                                request=areq))
 
         return json.dumps({
             "success": True,
@@ -1896,6 +1901,34 @@ _EXPECTED_STATES = {
 }
 _TRANSITIONAL = ("opening", "closing", "locking", "unlocking")
 
+# Canonical outcome statuses (kernel.actuator), with a stdlib fallback so a
+# kernel import hiccup never breaks control.
+try:
+    from .kernel.actuator import VERIFIED as _OUT_VERIFIED, \
+        MISMATCH as _OUT_MISMATCH, FAILED as _OUT_FAILED
+except Exception:   # pragma: no cover - defensive
+    _OUT_VERIFIED, _OUT_MISMATCH, _OUT_FAILED = "verified", "mismatch", "failed"
+
+
+def _record_actuator_outcome(request, status: str, hass: HomeAssistant,
+                             entity_id: str, detail: str = "") -> None:
+    """Record the canonical ActuatorOutcome for a verified actuation (MCU Phase
+    A, 8.31.0). The outcome model is the audit's point 18 — "the service
+    returned success" is not "the world reached the expected state". This is the
+    path's real record of which actually happened (requested → executed →
+    observed → verified). Best-effort; never raises."""
+    try:
+        from .kernel.actuator import ActuatorOutcome
+        st = hass.states.get(entity_id)
+        outcome = ActuatorOutcome(
+            request_id=(request.id if request is not None else f"{entity_id}:actuation"),
+            status=status,
+            observed=(str(st.state) if st is not None else None),
+            detail=detail)
+        _LOGGER.debug("actuator(outcome): %s", outcome.to_dict())
+    except Exception:   # pragma: no cover - defensive
+        pass
+
 
 def _state_ok(hass: HomeAssistant, entity_id: str, expected: tuple) -> Optional[bool]:
     st = hass.states.get(entity_id)
@@ -1908,8 +1941,14 @@ def _state_ok(hass: HomeAssistant, entity_id: str, expected: tuple) -> Optional[
 
 
 async def _verify_control(hass: HomeAssistant, entity_id: str, action: str,
-                          svc_domain: str, svc_name: str, svc_data: dict) -> None:
-    """Confirm a control action landed; one retry; honest report on failure."""
+                          svc_domain: str, svc_name: str, svc_data: dict,
+                          request=None) -> None:
+    """Confirm a control action landed; one retry; honest report on failure.
+
+    Also produces the canonical ActuatorOutcome (MCU Phase A, 8.31.0) — the
+    path's real requested→executed→observed→verified record: VERIFIED when the
+    world reached the expected state (first try or on retry), MISMATCH when it
+    did not even after a retry, FAILED when the retry call itself errored."""
     expected = _EXPECTED_STATES.get(action)
     if not expected:
         return
@@ -1920,6 +1959,8 @@ async def _verify_control(hass: HomeAssistant, entity_id: str, action: str,
             await _VERIFY_SLEEP(VERIFY_DELAY_SECS)
             ok = _state_ok(hass, entity_id, expected)
         if ok:
+            _record_actuator_outcome(request, _OUT_VERIFIED, hass, entity_id,
+                                     "reached expected state on first attempt")
             return                           # first-try success stays silent
         _LOGGER.info("verify: %s not %s after %s — retrying once",
                      entity_id, "/".join(expected), action)
@@ -1929,6 +1970,8 @@ async def _verify_control(hass: HomeAssistant, entity_id: str, action: str,
         ok = _state_ok(hass, entity_id, expected)
         from . import database
         if ok:
+            _record_actuator_outcome(request, _OUT_VERIFIED, hass, entity_id,
+                                     "reached expected state after one retry")
             await hass.async_add_executor_job(
                 lambda: database.save_activity(
                     entity_id=entity_id, category="verify", urgency="low",
@@ -1937,6 +1980,9 @@ async def _verify_control(hass: HomeAssistant, entity_id: str, action: str,
             )
         else:
             st = hass.states.get(entity_id)
+            _record_actuator_outcome(
+                request, _OUT_MISMATCH, hass, entity_id,
+                f"did not reach {'/'.join(expected)} even after a retry")
             await hass.async_add_executor_job(
                 lambda: database.save_activity(
                     entity_id=entity_id, category="verify", urgency="medium",
@@ -1946,6 +1992,7 @@ async def _verify_control(hass: HomeAssistant, entity_id: str, action: str,
                     source="agent")
             )
     except Exception as exc:
+        _record_actuator_outcome(request, _OUT_FAILED, hass, entity_id, str(exc))
         _LOGGER.debug("verify_control failed for %s: %s", entity_id, exc)
 
 

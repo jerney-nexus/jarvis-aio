@@ -58,8 +58,9 @@ _DECLARED: dict[str, dict] = {
     "loop_detect":  {"stage": "pure",    "owners": []},
     "journal":      {"stage": "pure",    "owners": []},
     "budget":       {"stage": "pure",    "owners": []},
-    # control_device constructs an ActuatorRequest in shadow (logs it).
-    "actuator":     {"stage": "shadow",  "owners": ["agent"]},
+    # control_device builds an ActuatorRequest (with expected_outcome) and the
+    # verify step produces the canonical ActuatorOutcome — 8.31.0, MCU Phase A.
+    "actuator":     {"stage": "parity",  "owners": ["agent"]},
 }
 
 _STAGE_ICON = {"pure": "·", "shadow": "◐", "parity": "◑", "enforce": "●"}

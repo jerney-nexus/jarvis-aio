@@ -24,7 +24,7 @@ drift into fiction.
 <!-- BEGIN kernel-coverage (python3 scripts/kernel_coverage.py --markdown) -->
 | Path | event | world_model | situation | authority | plan | verify | outcome |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `control_device` | · | ◑ | · | ◑ | · | ● | · |
+| `control_device` | · | ◑ | · | ◑ | · | ● | ● |
 | `bulk_control` | · | · | · | · | · | · | · |
 | `execute_plan` | · | · | · | · | · | · | · |
 | `intrusion` | · | · | ◑ | · | · | · | · |
@@ -33,10 +33,10 @@ drift into fiction.
 | `friday` | · | · | · | · | · | · | · |
 | `homer` | · | · | · | · | · | · | · |
 
-**Kernel coverage: 5.4%** (· none ◐ shadow ◑ parity ● full)
+**Kernel coverage: 7.1%** (· none ◐ shadow ◑ parity ● full)
 <!-- END kernel-coverage -->
 
-**5.4% is the honest number today** — most paths are still legacy, exactly the
+**7.1% is the honest number today** — most paths are still legacy, exactly the
 state the audit flagged ("the kernel is not yet the operating system of JARVIS").
 This figure is the one to move: *"X% of behaviour-bearing paths are
 kernel-authoritative"* is far more meaningful than *"Kernel Phase N completed."*
@@ -54,7 +54,12 @@ built structurally first; the enforce flip is a separate, explicit decision.
   `WorldModel` facade, the canonical context authority, rather than a bare
   `states.get` (parity, not full, because the post-action read-back still reads
   raw HA state). Authority at **parity** (`authority_bridge`, log-only) and a
-  real verify-after-act (`_verify_control`, `●`). The farthest-along path.
+  real verify-after-act (`_verify_control`, `●`). **Outcome** at full (8.31.0):
+  the verify step produces the canonical `kernel.actuator.ActuatorOutcome`
+  (requested → executed → observed → **verified / mismatch / failed**) as the
+  path's real outcome record — the audit's point 18, *"the service returned
+  success" is not "the world reached the expected state"*. The farthest-along
+  path.
 - **`intrusion`** — mirrors its lifecycle into the kernel **Situation** state
   machine at parity.
 - **`bulk_control` / `execute_plan`** — still the legacy in-agent paths (bulk uses
@@ -62,13 +67,15 @@ built structurally first; the enforce flip is a separate, explicit decision.
 - **`goals` / `proactive` / `friday` / `homer`** — not yet wired to any kernel
   contract.
 
-> **Actuator contract (8.26.0):** `control_device` now constructs a canonical
-> `kernel.actuator.ActuatorRequest` (who/intent/target/correlation/idempotency)
-> and logs it in **shadow** — a step toward the universal execution contract. It
-> is recorded in `KERNEL_ADOPTION.md` (`actuator` = shadow), not here, because
-> shadow-*logging* the request object does not yet make the path *pass through* a
-> pipeline contract. These cells rise only when execution actually routes through
-> the contract (Authority → preconditions → actuator → postconditions → outcome).
+> **Actuator contract (8.26.0 → 8.31.0):** `control_device` constructs a
+> canonical `kernel.actuator.ActuatorRequest` (who/intent/target/correlation/
+> idempotency/**expected_outcome**), and the verify step now produces the
+> matching `ActuatorOutcome` (requested → executed → observed → verified). That
+> is why the **outcome** cell above is `●` and `KERNEL_ADOPTION.md` lists
+> `actuator` at **parity** (8.31.0), up from shadow. Still ahead: routing
+> *execution itself* through the contract (Authority → preconditions → actuator →
+> postconditions) — the remaining `plan`/`event` cells — which is why
+> `control_device` is not yet full across the spine.
 
 ## How to raise the number
 
