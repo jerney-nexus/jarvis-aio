@@ -49,7 +49,7 @@ holds on the live home system.
 | `priority` | · pure | — |
 | `router` | · pure | — |
 | `situation` | ◑ parity | `intrusion` |
-| `world_model` | · pure | — |
+| `world_model` | ◑ parity | `agent` |
 <!-- END kernel-adoption -->
 
 ## Notes on specific primitives
@@ -57,8 +57,11 @@ holds on the live home system.
 - **persistence** is an internal seam (connection + migrations) consumed by other
   kernel modules such as `ledger`, not by live callers directly — "pure" here
   means "no legacy bypass to retire", not "unused".
-- **world_model** is a built read-facade with no live consumer yet; it waits for
-  its first caller rather than being wired speculatively.
+- **world_model** is at parity through `agent` (8.30.0, MCU Phase A): the
+  `control_device` path reads its pre-action context snapshot through the facade
+  — the canonical context authority — and uses the result (area, previous_state),
+  falling back to raw HA state. Parity, not enforce: the facade informs the path
+  but the raw sources stay authoritative underneath.
 - **authority** is at parity through `authority_bridge` (log-only): every control
   action records what the capability engine *would* have decided against what the
   legacy confirm-gate actually did. Flipping it to `enforce` on the live system is

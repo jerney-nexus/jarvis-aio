@@ -1,3 +1,14 @@
+## [8.30.0] — MCU Phase A (1/5): control_device reads world state through the kernel
+
+The third MCU gap audit (v8.29.0) made one net-new, actionable recommendation: stop adding kernel *primitives* and instead make **one behaviour-bearing path genuinely end-to-end through the kernel contract** — then template every other consequential actuator onto it. Its own risk #20 was proven by the releases it audited: 8.27→8.29 shipped three feature releases and moved honest kernel coverage by **0.0 points** (it sat at 4.2%). Phase A moves that number for real, one contract at a time, each its own release, with **authority staying log-only / owner-gated** — the spine is built structurally first; flipping enforcement remains a separate, explicit decision.
+
+This is step 1 of 5: the **WorldModel** read contract on `control_device`.
+
+- **`control_device` now reads its pre-action context through the kernel `WorldModel` facade** — the canonical context authority (entity_id / domain / name / state / **area**) — instead of a bare `hass.states.get`. The result now carries the resolved `area`, and `previous_state` comes from the canonical snapshot. Read-only and best-effort (the facade never raises; a missing snapshot falls back to raw state, and the not-found error is preserved). This is the audit's item #6 ("WorldModel needs to become the context authority, not merely a convenience API") applied to the farthest-along path.
+- **Honest coverage: 4.2% → 5.4%.** The `control_device` × `world_model` cell rises `·` → **◑ parity** — parity, *not* full, because the post-action verify/read-back still reads raw HA state. `scripts/kernel_coverage.py --check` verifies the claim against evidence in source (CI gate), so the number can't drift into fiction.
+
+4 new tests pin the wiring (previous_state and area come from the snapshot; a patched facade's distinct snapshot shows up in the result, proving the path routes through `WorldModel`; missing-entity still errors). No behaviour change to what executes or whether it executes. Kernel wiring → middle-digit bump **8.29.0 → 8.30.0**. Full suite green; audit + adoption + coverage gates clean.
+
 ## [8.29.0] — Faces: pinned recognition-time snapshots (#140 Phase 2)
 
 Phase 2 of the Faces tab. Previously each face card showed the *live* view from the camera that recognized the person — which is often empty by the time you look, since the person has moved on. Now JARVIS **pins the camera frame from the moment it recognized the face** and shows that, so a resident's card is the snapshot of them as they were last seen, not a stale empty hallway.

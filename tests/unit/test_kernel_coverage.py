@@ -43,6 +43,8 @@ def test_control_device_authority_and_verify_declared(kc):
     rows = kc.scan()
     assert rows["control_device"]["authority"] == "parity"
     assert rows["control_device"]["verify"] == "full"
+    # 8.30.0 (MCU Phase A): pre-action context read routes through WorldModel.
+    assert rows["control_device"]["world_model"] == "parity"
     # A path with no kernel wiring is all 'none'.
     assert set(rows["bulk_control"].values()) == {"none"}
 

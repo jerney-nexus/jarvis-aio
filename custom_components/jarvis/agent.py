@@ -1140,11 +1140,23 @@ async def _exec_control_device(hass: HomeAssistant, args: dict) -> str:
     action = args.get("action", "")
     value = args.get("value")
 
+    # World-model context (MCU Phase A — kernel golden path): control_device's
+    # pre-action snapshot is read through the kernel WorldModel facade — the
+    # canonical context authority (entity_id / domain / name / state / area) —
+    # rather than a bare states.get. Read-only and best-effort (never raises);
+    # the raw state stays available underneath for the post-action verify /
+    # read-back, which is why the coverage matrix rates this path's world_model
+    # at parity (not full). This is control_device's first kernel-contract read.
+    from .kernel.world_model import WorldModel
+    wm = WorldModel(hass)
+    snapshot = wm.device(entity_id)
     state = hass.states.get(entity_id)
-    if not state:
+    if not state and snapshot is None:
         return json.dumps({"error": f"Entity '{entity_id}' not found"})
 
     domain = entity_id.split(".")[0]
+    prev_state = snapshot["state"] if snapshot else (state.state if state else "unknown")
+    wm_area = snapshot.get("area") if snapshot else None
     svc_data = {"entity_id": entity_id}
 
     try:
@@ -1232,9 +1244,10 @@ async def _exec_control_device(hass: HomeAssistant, args: dict) -> str:
         return json.dumps({
             "success": True,
             "entity_id": entity_id,
-            "previous_state": state.state,
+            "previous_state": prev_state,
             "new_state": new_state.state if new_state else "unknown",
             "action": action,
+            "area": wm_area,
         })
     except Exception as exc:
         return json.dumps({"error": f"Failed: {exc}", "entity_id": entity_id})

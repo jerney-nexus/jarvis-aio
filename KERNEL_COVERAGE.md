@@ -24,7 +24,7 @@ drift into fiction.
 <!-- BEGIN kernel-coverage (python3 scripts/kernel_coverage.py --markdown) -->
 | Path | event | world_model | situation | authority | plan | verify | outcome |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `control_device` | · | · | · | ◑ | · | ● | · |
+| `control_device` | · | ◑ | · | ◑ | · | ● | · |
 | `bulk_control` | · | · | · | · | · | · | · |
 | `execute_plan` | · | · | · | · | · | · | · |
 | `intrusion` | · | · | ◑ | · | · | · | · |
@@ -33,18 +33,28 @@ drift into fiction.
 | `friday` | · | · | · | · | · | · | · |
 | `homer` | · | · | · | · | · | · | · |
 
-**Kernel coverage: 4.2%** (· none ◐ shadow ◑ parity ● full)
+**Kernel coverage: 5.4%** (· none ◐ shadow ◑ parity ● full)
 <!-- END kernel-coverage -->
 
-**4.2% is the honest number today** — most paths are still legacy, exactly the
+**5.4% is the honest number today** — most paths are still legacy, exactly the
 state the audit flagged ("the kernel is not yet the operating system of JARVIS").
 This figure is the one to move: *"X% of behaviour-bearing paths are
 kernel-authoritative"* is far more meaningful than *"Kernel Phase N completed."*
 
+**Phase A (the third MCU audit's one actionable recommendation)** is underway:
+make `control_device` a complete end-to-end kernel path, then template every
+other consequential actuator onto it. It ships one contract at a time, each its
+own release, with authority staying **log-only / owner-gated** — the spine is
+built structurally first; the enforce flip is a separate, explicit decision.
+
 ## What the cells mean today
 
-- **`control_device`** — Authority at **parity** (`authority_bridge`, log-only)
-  and a real verify-after-act (`_verify_control`, `●`). The farthest-along path.
+- **`control_device`** — the Phase A golden path in progress. **WorldModel** at
+  parity (8.30.0): its pre-action context snapshot is read through the
+  `WorldModel` facade, the canonical context authority, rather than a bare
+  `states.get` (parity, not full, because the post-action read-back still reads
+  raw HA state). Authority at **parity** (`authority_bridge`, log-only) and a
+  real verify-after-act (`_verify_control`, `●`). The farthest-along path.
 - **`intrusion`** — mirrors its lifecycle into the kernel **Situation** state
   machine at parity.
 - **`bulk_control` / `execute_plan`** — still the legacy in-agent paths (bulk uses
