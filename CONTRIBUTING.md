@@ -47,7 +47,24 @@ python3 -m pytest tests/ -q
 
 # Dashboard JavaScript parses
 node --check custom_components/jarvis/frontend/jarvis-panel.js
+
+# Kernel adoption + behavioral coverage gates (no drift, no undeclared actuators)
+python3 scripts/kernel_adoption.py --check
+python3 scripts/kernel_coverage.py --check
 ```
+
+## Kernel contract rule for new actions
+
+**Any new behaviour that can cause a consequential action on the home — calling a
+service, running a scene/script, applying a mode — must enter through the kernel
+contract from the start and be a declared path in `_PATHS`
+(`scripts/kernel_coverage.py`).** This is enforced: `kernel_coverage.py --check`
+(a CI gate) fails if a tool in agent's `_TOOL_MAP` is neither a declared coverage
+path nor in the `_NON_ACTUATOR_TOOLS` allowlist. When you add a tool that changes
+the home, wire it onto the kernel contract (WorldModel read → ActuatorRequest /
+ActuatorOutcome → actuation `JarvisEvent` → one-step `Plan`) and declare it as a
+path; a read-only or bookkeeping tool goes in the allowlist with a one-line
+rationale. See `KERNEL_COVERAGE.md` and `KERNEL_ADOPTION.md`.
 
 ## Releasing
 

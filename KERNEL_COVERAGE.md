@@ -27,25 +27,39 @@ drift into fiction.
 | `control_device` | ◑ | ◑ | · | ◑ | ◐ | ● | ● |
 | `bulk_control` | · | · | · | · | · | · | · |
 | `execute_plan` | · | · | · | · | · | · | · |
+| `run_scene_or_script` | · | · | · | · | · | · | · |
+| `set_mode` | · | · | · | · | · | · | · |
 | `intrusion` | · | · | ◑ | · | · | · | · |
 | `goals` | · | · | · | · | · | · | · |
 | `proactive` | · | · | · | · | · | · | · |
 | `friday` | · | · | · | · | · | · | · |
 | `homer` | · | · | · | · | · | · | · |
 
-**Kernel coverage: 8.9%** (· none ◐ shadow ◑ parity ● full)
+**Kernel coverage: 7.1%** (· none ◐ shadow ◑ parity ● full)
 <!-- END kernel-coverage -->
 
-**8.9% is the honest number today** — most paths are still legacy, exactly the
+**7.1% is the honest number today** — most paths are still legacy, exactly the
 state the audit flagged ("the kernel is not yet the operating system of JARVIS").
+It *dropped* from 8.9% at 8.34.0 on purpose: the new governance gate (below)
+surfaced two consequential tools that were acting on the home without being in
+this matrix at all — `run_scene_or_script` and `set_mode` — so they are now
+declared as the legacy paths they are. A lower, complete number beats a higher,
+partial one.
 This figure is the one to move: *"X% of behaviour-bearing paths are
 kernel-authoritative"* is far more meaningful than *"Kernel Phase N completed."*
 
-**Phase A (the third MCU audit's one actionable recommendation)** is underway:
-make `control_device` a complete end-to-end kernel path, then template every
-other consequential actuator onto it. It ships one contract at a time, each its
+**Phase A (the third MCU audit's one actionable recommendation)** is complete
+for the `control_device` path: its pre-action read (`world_model` ◑), outcome
+(`outcome` ●), event emission (`event` ◑) and plan expression (`plan` ◐) are
+wired, alongside the pre-existing authority parity (◑, log-only) and
+verify-after-act (●). `situation` stays `·` by design — not every single
+actuation is a situation, and forcing it would be the inflation this matrix
+exists to prevent. It shipped one contract at a time (8.30.0–8.33.0), each its
 own release, with authority staying **log-only / owner-gated** — the spine is
-built structurally first; the enforce flip is a separate, explicit decision.
+built structurally; the enforce flip is a separate, explicit decision. The next
+move is to *template* this onto the other consequential paths (`bulk_control`,
+`execute_plan`, `run_scene_or_script`, `set_mode`, …) and, eventually, route
+execution itself through the plan/actuator contract (needs an async plan driver).
 
 ## What the cells mean today
 
@@ -102,3 +116,26 @@ progress:
 
 No primitive is at `enforce` and authority stays **log-only / owner-gated**; this
 matrix measures wiring, not a licence to flip enforcement.
+
+## Governance rule (8.34.0): new consequential actions enter through the kernel
+
+> **Any new behaviour that can cause a consequential action on the home must
+> enter through the kernel contract from the start** — and must be a declared
+> path in `_PATHS` above.
+
+This is the audit's "rule I would add now", and it is enforced, not just
+written down. `scripts/kernel_coverage.py --check` (run in CI) now also fails if
+a tool in agent's `_TOOL_MAP` is **neither** a declared coverage path **nor**
+listed in the `_NON_ACTUATOR_TOOLS` allowlist (read-only / informational /
+bookkeeping tools). So a newly-added actuator tool cannot land uncounted: the
+author must either wire it as a path or explicitly classify it as a
+non-actuator. The gate paid for itself immediately — it surfaced
+`run_scene_or_script` and `set_mode`, two consequential tools that were acting on
+the home without appearing in this matrix, now declared as the legacy paths they
+are. When you add a tool:
+
+- **It can change the home** (calls a service, runs a scene/script, applies a
+  mode) → add it to `_PATHS`, ideally already wired onto the kernel contract
+  (WorldModel read → ActuatorRequest/Outcome → actuation event → one-step Plan).
+- **It only reads or does bookkeeping** → add it to `_NON_ACTUATOR_TOOLS` with a
+  one-line rationale.
