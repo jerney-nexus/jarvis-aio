@@ -49,7 +49,9 @@ _DECLARED: dict[str, dict] = {
     "world_model":  {"stage": "parity",  "owners": ["agent"]},
     "situation":    {"stage": "parity",  "owners": ["intrusion"]},
     "authority":    {"stage": "parity",  "owners": ["authority_bridge"]},
-    "plan":         {"stage": "pure",    "owners": []},
+    # control_device expresses each actuation as a one-step Plan in shadow
+    # (logs it) — 8.33.0, MCU Phase A.
+    "plan":         {"stage": "shadow",  "owners": ["agent"]},
     "beliefs":      {"stage": "pure",    "owners": []},
     "attention":    {"stage": "pure",    "owners": []},
     "router":       {"stage": "pure",    "owners": []},

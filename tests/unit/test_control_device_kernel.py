@@ -179,6 +179,45 @@ def test_from_actuation_builder(load):
     assert e.source == "actuator"
 
 
+# ── 8.33.0: the actuation is expressed as a canonical one-step kernel Plan ───
+
+def test_shadow_control_plan_shape(agent):
+    plan = agent._shadow_control_plan("light.turn_on", "light.den", "turn_on",
+                                      ("on",), correlation_id="cid1")
+    assert plan is not None
+    assert plan.goal == "turn_on light.den"
+    assert plan.correlation_id == "cid1"
+    assert len(plan.steps) == 1
+    step = plan.steps[0]
+    assert step.action == "light.turn_on"
+    assert step.params == {"entity_id": "light.den"}
+    assert step.preconditions == ("exists:light.den",)
+    assert step.postconditions == ("state:on",)
+    assert step.idempotency_key == "light.den:turn_on"
+
+
+def test_shadow_control_plan_no_expected(agent):
+    """A non-deterministic action yields a plan with no postconditions."""
+    plan = agent._shadow_control_plan("light.turn_on", "light.den",
+                                      "set_brightness", None)
+    assert plan is not None and plan.steps[0].postconditions == ()
+
+
+async def test_control_device_builds_shadow_plan(agent, fake_hass, no_sleep, monkeypatch):
+    calls = []
+    real = agent._shadow_control_plan
+    monkeypatch.setattr(agent, "_shadow_control_plan",
+                        lambda *a, **k: calls.append((a, k)) or real(*a, **k))
+    fake_hass.states.set("lock.front", "unlocked")
+    await agent._exec_control_device(
+        fake_hass, {"entity_id": "lock.front", "action": "lock"})
+    await fake_hass.drain()
+    assert len(calls) == 1
+    (cap, eid, act, expected), _ = calls[0]
+    assert cap == "lock.lock" and eid == "lock.front" and act == "lock"
+    assert expected == ("locked",)
+
+
 def test_record_outcome_builds_actuator_outcome(agent, fake_hass, load, caplog):
     """The helper logs a real kernel ActuatorOutcome with observed state."""
     act = load("kernel.actuator")

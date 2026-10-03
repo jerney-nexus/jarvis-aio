@@ -1,3 +1,13 @@
+## [8.33.0] — MCU Phase A (4/5): control_device expresses the actuation as a kernel Plan
+
+Step 4 of 5 of the Phase A golden path — the **plan** contract on `control_device`. The audit noted the project has a real `kernel.plan` (preconditions → act → postconditions, idempotency, retries) that the live agent hadn't adopted. This release has `control_device` express each actuation as a canonical one-step kernel `Plan`.
+
+- **`control_device` builds a canonical one-step `kernel.plan.Plan`** for every executed actuation — a `Step` with `preconditions=("exists:<entity>",)`, `postconditions=("state:<expected>",…)` for deterministic targets, and an `idempotency_key` of `"<entity>:<action>"` — and logs it (`_shadow_control_plan`). No behaviour change; the legacy path still performs the action.
+- **Deliberately shadow, not full.** `kernel.plan.execute_plan` is **synchronous** while HA actuation is `await`-ed, so routing *execution itself* through the plan contract needs an async plan driver — a later step. Expressing the actuation as a `Plan` object on real traffic (exactly how `ActuatorRequest` began) exercises the contract's shape before anything depends on it. Journaling each actuation was considered and **deliberately not done**: a single fire-and-verify control action completes in-request and needs no crash recovery, so opening a SQLite journal per action would add live I/O cost and a failure surface for no benefit — the journal belongs with multi-step `execute_plan` adoption.
+- **Honest coverage: 8.3% → 8.9%.** `control_device × plan` rises `·` → **◐ shadow**. `kernel_adoption` `plan` `pure` → **◐ shadow** (owner `agent`). Verified by CI gates against evidence in source.
+
+3 new tests (the plan's step shape — action/params/preconditions/postconditions/idempotency; no postconditions for a non-deterministic action; and that `control_device` builds the plan with the right capability/entity/action/expected). Authority stays **log-only / owner-gated** — unchanged. Kernel wiring → middle-digit bump **8.32.0 → 8.33.0**. Full suite green; audit + adoption + coverage gates clean.
+
 ## [8.32.0] — MCU Phase A (3/5): control_device publishes a canonical actuation event
 
 Step 3 of 5 of the Phase A golden path — the **event** contract on `control_device`. The audit's item #8: the event bus should be JARVIS's *nervous system*, carrying not just what the home did (`state_changed`) but what **JARVIS did**. Until now only perception (state changes, camera analysis, voice turns) produced `JarvisEvent`s; actuations didn't enter the stream.

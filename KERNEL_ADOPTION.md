@@ -47,7 +47,7 @@ holds on the live home system.
 | `ledger` | ◐ shadow | `__init__` |
 | `loop_detect` | · pure | — |
 | `persistence` | · pure | — |
-| `plan` | · pure | — |
+| `plan` | ◐ shadow | `agent` |
 | `priority` | · pure | — |
 | `router` | · pure | — |
 | `situation` | ◑ parity | `intrusion` |
@@ -71,6 +71,12 @@ holds on the live home system.
   enforce: the contract records the actuation faithfully, but legacy code still
   performs the HA service call — routing *execution* through the actuator is a
   later step.
+- **plan** is at shadow through `agent` (8.33.0, MCU Phase A): `control_device`
+  expresses each actuation as a canonical one-step `Plan` (preconditions → act →
+  postconditions, with an idempotency key) and logs it. Shadow, not parity:
+  `kernel.plan.execute_plan` is synchronous while HA actuation is `await`-ed, so
+  the plan describes the actuation but legacy code still performs it — having the
+  plan own execution needs an async driver and is a later step.
 - **event** is at parity across `agent`, `camera`, `observer`, `proactive_audio`.
   As of 8.32.0 (MCU Phase A) `control_device` publishes a canonical actuation
   `JarvisEvent` (`from_actuation`) on the bus, which the ledger records — so the
