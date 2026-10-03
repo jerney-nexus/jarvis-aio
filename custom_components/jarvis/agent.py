@@ -1158,7 +1158,8 @@ async def _exec_control_device(hass: HomeAssistant, args: dict) -> str:
     prev_state = snapshot["state"] if snapshot else (state.state if state else "unknown")
     wm_area = snapshot.get("area") if snapshot else None
     svc_data = {"entity_id": entity_id}
-    areq = None   # the canonical ActuatorRequest for this actuation, if built
+    areq = None         # the canonical ActuatorRequest for this actuation, if built
+    capability = None   # domain.service actually executed, for the actuation event
 
     try:
         action_map = {
@@ -1178,12 +1179,15 @@ async def _exec_control_device(hass: HomeAssistant, args: dict) -> str:
 
         if action == "set_brightness":
             svc_data["brightness_pct"] = int(value or 50)
+            capability = "light.turn_on"
             await hass.services.async_call("light", "turn_on", svc_data, blocking=True)
         elif action == "set_temperature":
             svc_data["temperature"] = float(value or 72)
+            capability = "climate.set_temperature"
             await hass.services.async_call("climate", "set_temperature", svc_data, blocking=True)
         elif action == "volume_set":
             svc_data["volume_level"] = (value or 50) / 100.0
+            capability = "media_player.volume_set"
             await hass.services.async_call("media_player", "volume_set", svc_data, blocking=True)
         elif action in action_map:
             svc_domain, svc_name = action_map[action]
@@ -1230,9 +1234,28 @@ async def _exec_control_device(hass: HomeAssistant, args: dict) -> str:
                 _LOGGER.debug("actuator(request): %s", areq.to_dict())
             except Exception:
                 areq = None
+            capability = f"{svc_domain}.{svc_name}"
             await hass.services.async_call(svc_domain, svc_name, svc_data, blocking=True)
         else:
             return json.dumps({"error": f"Unknown action: {action}"})
+
+        # Event emission (MCU Phase A — the event bus as nervous system, audit
+        # item #8): publish a canonical JarvisEvent that *JARVIS acted* onto the
+        # kernel event bus (the ledger records it). Parity, not full — it enters
+        # the stream but no cognitive consumer reacts to it yet. Best-effort:
+        # publishing never affects the actuation.
+        if capability:
+            try:
+                from . import events as _events
+                from .kernel import from_actuation, correlation as _corr2
+                _ev = from_actuation(
+                    capability, target=entity_id,
+                    intent=action.replace("_", " "), location=wm_area,
+                    request_id=(areq.id if areq is not None else None),
+                    correlation_id=_corr2.current())
+                _events.publish(hass, _ev)
+            except Exception:
+                pass
 
         # Get updated state
         new_state = hass.states.get(entity_id)

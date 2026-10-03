@@ -125,6 +125,60 @@ async def test_no_outcome_for_non_deterministic_action(
     assert outcomes == []
 
 
+# ── 8.32.0: the actuation is published as a canonical JarvisEvent ────────────
+
+@pytest.fixture
+def published(agent, load, monkeypatch):
+    """Capture every JarvisEvent control_device publishes onto the bus."""
+    ev_mod = load("events")
+    sink = []
+    monkeypatch.setattr(ev_mod, "publish", lambda hass, ev: sink.append(ev))
+    return sink
+
+
+async def test_actuation_publishes_canonical_event(agent, fake_hass, no_sleep, published):
+    fake_hass.states.set("light.den", "off", area="den")
+    await agent._exec_control_device(
+        fake_hass, {"entity_id": "light.den", "action": "turn_on"})
+    await fake_hass.drain()
+    assert len(published) == 1
+    ev = published[0]
+    assert ev.type == "control.actuation"
+    assert ev.source == "actuator"
+    assert ev.subject == "light.den"
+    assert ev.location == "den"
+    assert ev.data["capability"] == "light.turn_on"
+    assert ev.data["intent"] == "turn on"
+    # The event links back to the correlated ActuatorRequest.
+    assert ev.data["request_id"] is not None
+
+
+async def test_parametric_action_publishes_event(agent, fake_hass, no_sleep, published):
+    fake_hass.states.set("light.den", "on")
+    await agent._exec_control_device(
+        fake_hass, {"entity_id": "light.den", "action": "set_brightness", "value": 30})
+    await fake_hass.drain()
+    assert len(published) == 1
+    assert published[0].data["capability"] == "light.turn_on"
+
+
+async def test_unknown_action_publishes_nothing(agent, fake_hass, published):
+    fake_hass.states.set("light.den", "on")
+    out = await agent._exec_control_device(
+        fake_hass, {"entity_id": "light.den", "action": "frobnicate"})
+    assert "Unknown action" in out
+    assert published == []
+
+
+def test_from_actuation_builder(load):
+    ev = load("kernel.event")
+    e = ev.from_actuation("lock.lock", target="lock.front", intent="lock")
+    assert e.type == ev.EVENT_ACTUATION == "control.actuation"
+    assert e.subject == "lock.front"
+    assert e.data["capability"] == "lock.lock"
+    assert e.source == "actuator"
+
+
 def test_record_outcome_builds_actuator_outcome(agent, fake_hass, load, caplog):
     """The helper logs a real kernel ActuatorOutcome with observed state."""
     act = load("kernel.actuator")

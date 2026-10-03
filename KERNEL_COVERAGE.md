@@ -24,7 +24,7 @@ drift into fiction.
 <!-- BEGIN kernel-coverage (python3 scripts/kernel_coverage.py --markdown) -->
 | Path | event | world_model | situation | authority | plan | verify | outcome |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `control_device` | · | ◑ | · | ◑ | · | ● | ● |
+| `control_device` | ◑ | ◑ | · | ◑ | · | ● | ● |
 | `bulk_control` | · | · | · | · | · | · | · |
 | `execute_plan` | · | · | · | · | · | · | · |
 | `intrusion` | · | · | ◑ | · | · | · | · |
@@ -33,10 +33,10 @@ drift into fiction.
 | `friday` | · | · | · | · | · | · | · |
 | `homer` | · | · | · | · | · | · | · |
 
-**Kernel coverage: 7.1%** (· none ◐ shadow ◑ parity ● full)
+**Kernel coverage: 8.3%** (· none ◐ shadow ◑ parity ● full)
 <!-- END kernel-coverage -->
 
-**7.1% is the honest number today** — most paths are still legacy, exactly the
+**8.3% is the honest number today** — most paths are still legacy, exactly the
 state the audit flagged ("the kernel is not yet the operating system of JARVIS").
 This figure is the one to move: *"X% of behaviour-bearing paths are
 kernel-authoritative"* is far more meaningful than *"Kernel Phase N completed."*
@@ -58,8 +58,12 @@ built structurally first; the enforce flip is a separate, explicit decision.
   the verify step produces the canonical `kernel.actuator.ActuatorOutcome`
   (requested → executed → observed → **verified / mismatch / failed**) as the
   path's real outcome record — the audit's point 18, *"the service returned
-  success" is not "the world reached the expected state"*. The farthest-along
-  path.
+  success" is not "the world reached the expected state"*. **Event** at parity
+  (8.32.0): the actuation is published as a canonical `JarvisEvent`
+  (`from_actuation`) onto the kernel event bus, which the ledger records —
+  parity, not full, because it enters the stream but no cognitive consumer
+  reacts to it yet (the audit's item #8, the event bus as nervous system). The
+  farthest-along path.
 - **`intrusion`** — mirrors its lifecycle into the kernel **Situation** state
   machine at parity.
 - **`bulk_control` / `execute_plan`** — still the legacy in-agent paths (bulk uses

@@ -27,6 +27,7 @@ from typing import Any, Iterable, Mapping, Optional
 EVENT_STATE_CHANGED = "state_changed"
 EVENT_CAMERA_ANALYSIS = "camera.analysis"
 EVENT_VOICE_TURN = "voice.turn"
+EVENT_ACTUATION = "control.actuation"
 
 
 def _new_id() -> str:
@@ -198,6 +199,37 @@ def from_voice_turn(
         location=location,
         data={"text": text, "intent": intent},
         confidence=confidence,
+        importance=importance,
+        correlation_id=correlation_id,
+    )
+
+
+def from_actuation(
+    capability: str,
+    target: str,
+    *,
+    intent: Optional[str] = None,
+    actor: str = "jarvis",
+    location: Optional[str] = None,
+    request_id: Optional[str] = None,
+    correlation_id: Optional[str] = None,
+    importance: float = 0.5,
+) -> JarvisEvent:
+    """A control action JARVIS performed on the home, as a JarvisEvent.
+
+    The nervous-system record that *JARVIS acted* — who, what capability, on
+    what target, why — distinct from the ``state_changed`` the action causes.
+    Emitted by ``control_device`` so an actuation enters the event stream the
+    same way perception does (MCU audit item #8, the event bus as the nervous
+    system). ``request_id`` links it back to the correlated ``ActuatorRequest``.
+    """
+    return JarvisEvent(
+        type=EVENT_ACTUATION,
+        source="actuator",
+        subject=target,
+        location=location,
+        data={"capability": capability, "intent": intent, "actor": actor,
+              "request_id": request_id},
         importance=importance,
         correlation_id=correlation_id,
     )
