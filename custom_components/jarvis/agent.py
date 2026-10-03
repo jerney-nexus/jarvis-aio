@@ -1239,20 +1239,25 @@ async def _exec_control_device(hass: HomeAssistant, args: dict) -> str:
         else:
             return json.dumps({"error": f"Unknown action: {action}"})
 
-        # Event emission (MCU Phase A — the event bus as nervous system, audit
-        # item #8): publish a canonical JarvisEvent that *JARVIS acted* onto the
-        # kernel event bus (the ledger records it). Parity, not full — it enters
-        # the stream but no cognitive consumer reacts to it yet. Best-effort:
-        # publishing never affects the actuation.
         if capability:
+            # Plan contract (MCU Phase A, SHADOW): express this actuation as a
+            # canonical one-step kernel Plan and log it. Execution stays legacy.
+            _shadow_control_plan(
+                capability, entity_id, action, _EXPECTED_STATES.get(action),
+                correlation_id=_safe_correlation_id())
+            # Event emission (MCU Phase A — the event bus as nervous system,
+            # audit item #8): publish a canonical JarvisEvent that *JARVIS acted*
+            # onto the kernel event bus (the ledger records it). Parity, not full
+            # — it enters the stream but no cognitive consumer reacts to it yet.
+            # Best-effort: publishing never affects the actuation.
             try:
                 from . import events as _events
-                from .kernel import from_actuation, correlation as _corr2
+                from .kernel import from_actuation
                 _ev = from_actuation(
                     capability, target=entity_id,
                     intent=action.replace("_", " "), location=wm_area,
                     request_id=(areq.id if areq is not None else None),
-                    correlation_id=_corr2.current())
+                    correlation_id=_safe_correlation_id())
                 _events.publish(hass, _ev)
             except Exception:
                 pass
@@ -1931,6 +1936,41 @@ try:
         MISMATCH as _OUT_MISMATCH, FAILED as _OUT_FAILED
 except Exception:   # pragma: no cover - defensive
     _OUT_VERIFIED, _OUT_MISMATCH, _OUT_FAILED = "verified", "mismatch", "failed"
+
+
+def _safe_correlation_id():
+    """Current kernel correlation id, or None — never raises."""
+    try:
+        from .kernel import correlation
+        return correlation.current()
+    except Exception:   # pragma: no cover - defensive
+        return None
+
+
+def _shadow_control_plan(capability: str, entity_id: str, action: str,
+                         expected, *, correlation_id=None):
+    """Express a control actuation as a canonical one-step kernel Plan (MCU
+    Phase A, 8.33.0 — SHADOW). Built and logged on real traffic so the plan
+    contract (preconditions → act → postconditions, with an idempotency key) is
+    exercised before execution routes through it; the legacy path still performs
+    the action. ``kernel.plan.execute_plan`` is synchronous while HA actuation is
+    ``await``-ed, so having the plan *own* execution is a later (full) step.
+    Best-effort; never raises."""
+    try:
+        from .kernel.plan import Plan, Step
+        step = Step(
+            action=capability,
+            params={"entity_id": entity_id},
+            preconditions=(f"exists:{entity_id}",),
+            postconditions=tuple(f"state:{e}" for e in (expected or ())),
+            idempotency_key=f"{entity_id}:{action}")
+        plan = Plan(goal=f"{action} {entity_id}", steps=(step,),
+                    correlation_id=correlation_id)
+        _LOGGER.debug("plan(shadow): goal=%s steps=%s",
+                      plan.goal, [s.action for s in plan.steps])
+        return plan
+    except Exception:   # pragma: no cover - defensive
+        return None
 
 
 def _record_actuator_outcome(request, status: str, hass: HomeAssistant,

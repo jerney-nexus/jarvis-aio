@@ -63,6 +63,10 @@ _PATHS: dict[str, dict] = {
             # JarvisEvent on the bus (ledger records it). Parity, not full — it
             # enters the event stream but no cognitive consumer reacts yet.
             "event": {"stage": "parity", "evidence": "from_actuation"},
+            # 8.33.0 (MCU Phase A): the actuation is expressed as a canonical
+            # one-step kernel Plan and logged. Shadow — execute_plan is sync
+            # while HA actuation is async, so execution stays legacy for now.
+            "plan": {"stage": "shadow", "evidence": "_shadow_control_plan"},
         },
     },
     # Uses only the legacy policy confirmation gate — no kernel contract yet.

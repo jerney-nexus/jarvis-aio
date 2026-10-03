@@ -24,7 +24,7 @@ drift into fiction.
 <!-- BEGIN kernel-coverage (python3 scripts/kernel_coverage.py --markdown) -->
 | Path | event | world_model | situation | authority | plan | verify | outcome |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `control_device` | ◑ | ◑ | · | ◑ | · | ● | ● |
+| `control_device` | ◑ | ◑ | · | ◑ | ◐ | ● | ● |
 | `bulk_control` | · | · | · | · | · | · | · |
 | `execute_plan` | · | · | · | · | · | · | · |
 | `intrusion` | · | · | ◑ | · | · | · | · |
@@ -33,10 +33,10 @@ drift into fiction.
 | `friday` | · | · | · | · | · | · | · |
 | `homer` | · | · | · | · | · | · | · |
 
-**Kernel coverage: 8.3%** (· none ◐ shadow ◑ parity ● full)
+**Kernel coverage: 8.9%** (· none ◐ shadow ◑ parity ● full)
 <!-- END kernel-coverage -->
 
-**8.3% is the honest number today** — most paths are still legacy, exactly the
+**8.9% is the honest number today** — most paths are still legacy, exactly the
 state the audit flagged ("the kernel is not yet the operating system of JARVIS").
 This figure is the one to move: *"X% of behaviour-bearing paths are
 kernel-authoritative"* is far more meaningful than *"Kernel Phase N completed."*
@@ -62,8 +62,12 @@ built structurally first; the enforce flip is a separate, explicit decision.
   (8.32.0): the actuation is published as a canonical `JarvisEvent`
   (`from_actuation`) onto the kernel event bus, which the ledger records —
   parity, not full, because it enters the stream but no cognitive consumer
-  reacts to it yet (the audit's item #8, the event bus as nervous system). The
-  farthest-along path.
+  reacts to it yet (the audit's item #8, the event bus as nervous system).
+  **Plan** at shadow (8.33.0): the actuation is expressed as a canonical
+  one-step `kernel.plan.Plan` (preconditions → act → postconditions, with an
+  idempotency key) and logged — shadow, because `execute_plan` is synchronous
+  while HA actuation is `await`-ed, so the plan does not yet *own* execution.
+  The farthest-along path.
 - **`intrusion`** — mirrors its lifecycle into the kernel **Situation** state
   machine at parity.
 - **`bulk_control` / `execute_plan`** — still the legacy in-agent paths (bulk uses
@@ -76,10 +80,12 @@ built structurally first; the enforce flip is a separate, explicit decision.
 > idempotency/**expected_outcome**), and the verify step now produces the
 > matching `ActuatorOutcome` (requested → executed → observed → verified). That
 > is why the **outcome** cell above is `●` and `KERNEL_ADOPTION.md` lists
-> `actuator` at **parity** (8.31.0), up from shadow. Still ahead: routing
-> *execution itself* through the contract (Authority → preconditions → actuator →
-> postconditions) — the remaining `plan`/`event` cells — which is why
-> `control_device` is not yet full across the spine.
+> `actuator` at **parity** (8.31.0), up from shadow. The actuation also now
+> publishes a canonical `JarvisEvent` (8.32.0, `event` ◑) and is expressed as a
+> one-step `kernel.plan.Plan` (8.33.0, `plan` ◐). Still ahead: routing
+> *execution itself* through the plan/actuator contract (so the kernel, not the
+> legacy branch, performs the `await`ed service call) — the step that raises
+> `plan` from shadow to full and that an async plan driver unblocks.
 
 ## How to raise the number
 
