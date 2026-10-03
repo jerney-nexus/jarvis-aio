@@ -55,6 +55,10 @@ _PATHS: dict[str, dict] = {
             "authority": {"stage": "parity", "evidence": "authority_bridge"},
             # v6.38 verify-after-act for deterministic targets.
             "verify": {"stage": "full", "evidence": "_verify_control"},
+            # 8.31.0 (MCU Phase A): the verify step produces the canonical
+            # ActuatorOutcome (requested→executed→observed→verified) as the
+            # path's real outcome record — the audit's point 18.
+            "outcome": {"stage": "full", "evidence": "ActuatorOutcome"},
         },
     },
     # Uses only the legacy policy confirmation gate — no kernel contract yet.

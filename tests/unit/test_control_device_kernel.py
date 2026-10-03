@@ -5,6 +5,7 @@ migrated onto the kernel contract one stage at a time (WorldModel → … → Ou
 8.30.0 — world_model (parity): control_device reads its pre-action context
 snapshot through the kernel WorldModel facade, not a bare states.get."""
 import json
+import logging
 import sys
 import types
 
@@ -66,3 +67,72 @@ async def test_missing_entity_still_errors(agent, fake_hass):
     out = await agent._exec_control_device(
         fake_hass, {"entity_id": "light.ghost", "action": "turn_on"})
     assert "not found" in out
+
+
+# ── 8.31.0: the verify step produces the canonical ActuatorOutcome ───────────
+
+@pytest.fixture
+def no_sleep(agent, monkeypatch):
+    async def _sleep(_secs):
+        return None
+    monkeypatch.setattr(agent, "_VERIFY_SLEEP", _sleep)
+
+
+@pytest.fixture
+def outcomes(agent, monkeypatch):
+    """Capture (request, status, detail) for every recorded ActuatorOutcome."""
+    sink = []
+    real = agent._record_actuator_outcome
+
+    def _spy(request, status, hass, entity_id, detail=""):
+        sink.append({"request": request, "status": status, "detail": detail})
+        return real(request, status, hass, entity_id, detail)
+    monkeypatch.setattr(agent, "_record_actuator_outcome", _spy)
+    return sink
+
+
+async def test_outcome_verified_on_success(agent, fake_hass, no_sleep, outcomes):
+    fake_hass.states.set("light.den", "off")
+    async def flip(domain, service, data=None, blocking=False, **kw):
+        fake_hass.service_calls.append((domain, service, dict(data or {})))
+        fake_hass.states.set("light.den", "on")
+    fake_hass.services.async_call = flip
+    await agent._exec_control_device(
+        fake_hass, {"entity_id": "light.den", "action": "turn_on"})
+    await fake_hass.drain()
+    assert [o["status"] for o in outcomes] == [agent._OUT_VERIFIED]
+    # The outcome references the canonical ActuatorRequest built for the action.
+    assert outcomes[0]["request"] is not None
+    assert outcomes[0]["request"].expected_outcome == "on"
+
+
+async def test_outcome_mismatch_when_world_never_reaches_expected(
+        agent, fake_hass, no_sleep, outcomes):
+    fake_hass.states.set("cover.garage_door", "open")   # never becomes 'closed'
+    await agent._exec_control_device(
+        fake_hass, {"entity_id": "cover.garage_door", "action": "close"})
+    await fake_hass.drain()
+    assert outcomes[-1]["status"] == agent._OUT_MISMATCH
+
+
+async def test_no_outcome_for_non_deterministic_action(
+        agent, fake_hass, no_sleep, outcomes):
+    """set_brightness has no expected end-state, so no verify/outcome runs."""
+    fake_hass.states.set("light.den", "on")
+    await agent._exec_control_device(
+        fake_hass, {"entity_id": "light.den", "action": "set_brightness", "value": 40})
+    await fake_hass.drain()
+    assert outcomes == []
+
+
+def test_record_outcome_builds_actuator_outcome(agent, fake_hass, load, caplog):
+    """The helper logs a real kernel ActuatorOutcome with observed state."""
+    act = load("kernel.actuator")
+    req = act.build_actuator_request("light.turn_on", target="light.den")
+    fake_hass.states.set("light.den", "on")
+    with caplog.at_level(logging.DEBUG):
+        agent._record_actuator_outcome(req, agent._OUT_VERIFIED, fake_hass,
+                                       "light.den", "ok")
+    msgs = [r.getMessage() for r in caplog.records]
+    assert any("actuator(outcome):" in m and "verified" in m and "'observed': 'on'" in m
+               for m in msgs)
