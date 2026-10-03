@@ -41,7 +41,7 @@ holds on the live home system.
 | `budget` | · pure | — |
 | `causal` | · pure | — |
 | `correlation` | ◐ shadow | `agent`, `decision_record`, `observer`, `proactive_audio` |
-| `event` | ◑ parity | `camera`, `observer`, `proactive_audio` |
+| `event` | ◑ parity | `agent`, `camera`, `observer`, `proactive_audio` |
 | `event_bus` | ◐ shadow | `__init__` |
 | `journal` | · pure | — |
 | `ledger` | ◐ shadow | `__init__` |
@@ -71,6 +71,11 @@ holds on the live home system.
   enforce: the contract records the actuation faithfully, but legacy code still
   performs the HA service call — routing *execution* through the actuator is a
   later step.
+- **event** is at parity across `agent`, `camera`, `observer`, `proactive_audio`.
+  As of 8.32.0 (MCU Phase A) `control_device` publishes a canonical actuation
+  `JarvisEvent` (`from_actuation`) on the bus, which the ledger records — so the
+  actuation enters the event stream alongside perception. Parity, not enforce:
+  the event is emitted and recorded, but no cognitive consumer reacts to it yet.
 - **authority** is at parity through `authority_bridge` (log-only): every control
   action records what the capability engine *would* have decided against what the
   legacy confirm-gate actually did. Flipping it to `enforce` on the live system is

@@ -13,10 +13,12 @@ from __future__ import annotations
 
 from . import correlation, persistence
 from .event import (
+    EVENT_ACTUATION,
     EVENT_CAMERA_ANALYSIS,
     EVENT_STATE_CHANGED,
     EVENT_VOICE_TURN,
     JarvisEvent,
+    from_actuation,
     from_camera_analysis,
     from_state_changed,
     from_voice_turn,
@@ -61,9 +63,11 @@ __all__ = [
     "EVENT_STATE_CHANGED",
     "EVENT_CAMERA_ANALYSIS",
     "EVENT_VOICE_TURN",
+    "EVENT_ACTUATION",
     "from_state_changed",
     "from_camera_analysis",
     "from_voice_turn",
+    "from_actuation",
     "persistence",
     "correlation",
     "JarvisEventBus",

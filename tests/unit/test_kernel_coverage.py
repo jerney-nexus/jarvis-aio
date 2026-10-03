@@ -47,6 +47,8 @@ def test_control_device_authority_and_verify_declared(kc):
     assert rows["control_device"]["world_model"] == "parity"
     # 8.31.0 (MCU Phase A): the verify step produces a canonical ActuatorOutcome.
     assert rows["control_device"]["outcome"] == "full"
+    # 8.32.0 (MCU Phase A): the actuation publishes a canonical JarvisEvent.
+    assert rows["control_device"]["event"] == "parity"
     # A path with no kernel wiring is all 'none'.
     assert set(rows["bulk_control"].values()) == {"none"}
 

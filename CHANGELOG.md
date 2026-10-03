@@ -1,3 +1,13 @@
+## [8.32.0] — MCU Phase A (3/5): control_device publishes a canonical actuation event
+
+Step 3 of 5 of the Phase A golden path — the **event** contract on `control_device`. The audit's item #8: the event bus should be JARVIS's *nervous system*, carrying not just what the home did (`state_changed`) but what **JARVIS did**. Until now only perception (state changes, camera analysis, voice turns) produced `JarvisEvent`s; actuations didn't enter the stream.
+
+- **New kernel event builder `from_actuation()`** (`kernel.event`, type `control.actuation`, source `actuator`) — the canonical record that *JARVIS acted*: who (actor), what capability, on what target, why (intent), linked to the correlated `ActuatorRequest` via `request_id`. Exported from the kernel package alongside the other `from_*` builders.
+- **`control_device` publishes one actuation event per executed action** onto the kernel event bus (via the existing `events.publish` bridge), which the ledger records. Covers every executed action — the `action_map` set *and* the parametric ones (brightness, temperature, volume). Carries the WorldModel-resolved area as `location`. Best-effort: publishing never affects the actuation, and an unknown action publishes nothing.
+- **Honest coverage: 7.1% → 8.3%.** `control_device × event` rises `·` → **◑ parity** — parity, not full, because the actuation enters the event stream but no cognitive consumer reacts to it yet. `kernel_adoption` `event` adds `agent` as a live caller. Verified by CI gates against evidence in source.
+
+4 new tests (canonical event published with capability/intent/location/request_id, parametric actions publish too, unknown actions publish nothing, and the `from_actuation` builder). Authority stays **log-only / owner-gated** — unchanged. Kernel wiring → middle-digit bump **8.31.0 → 8.32.0**. Full suite green; audit + adoption + coverage gates clean.
+
 ## [8.31.0] — MCU Phase A (2/5): control_device produces a canonical ActuatorOutcome
 
 Step 2 of 5 of the Phase A golden path — the **outcome** contract on `control_device`. The audit's point 18: *"the HA service returned success" is not "the world reached the expected state"* (HA says the light turned off; it's still on). The path already had verify-after-act that knew the difference and logged it honestly — this release makes that determination the canonical kernel outcome record.

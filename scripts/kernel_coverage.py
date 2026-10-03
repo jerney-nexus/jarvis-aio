@@ -59,6 +59,10 @@ _PATHS: dict[str, dict] = {
             # ActuatorOutcome (requested→executed→observed→verified) as the
             # path's real outcome record — the audit's point 18.
             "outcome": {"stage": "full", "evidence": "ActuatorOutcome"},
+            # 8.32.0 (MCU Phase A): the actuation is published as a canonical
+            # JarvisEvent on the bus (ledger records it). Parity, not full — it
+            # enters the event stream but no cognitive consumer reacts yet.
+            "event": {"stage": "parity", "evidence": "from_actuation"},
         },
     },
     # Uses only the legacy policy confirmation gate — no kernel contract yet.
