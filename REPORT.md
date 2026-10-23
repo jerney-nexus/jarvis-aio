@@ -1,10 +1,10 @@
-# JARVIS traction report — 2026-10-22
+# JARVIS traction report — 2026-10-23
 
 Generated daily by `.github/workflows/traffic.yml`. What to do with these
 numbers lives in `docs/GROWTH.md` on the default branch. Clone counts
 include CI checkouts, so treat views and referrers as the audience signal.
 
-## 7 days to 2026-10-21 vs the 7 before
+## 7 days to 2026-10-22 vs the 7 before
 
 | Metric | Last 7d | Prior 7d | Change |
 |---|---:|---:|---:|
@@ -20,7 +20,7 @@ include CI checkouts, so treat views and referrers as the audience signal.
 | Stars | 0 | +0 | +0 |
 | Forks | 0 | +0 | +0 |
 | Watchers | 0 | +0 | +0 |
-| HA analytics installs | — | — | — |
+| HA analytics installs | 105 | — | — |
 | Release asset downloads | 0 | +0 | +0 |
 
 ## Top referrers (rolling 14 days)
